@@ -1,0 +1,315 @@
+****************************************************************
+*--------------------------------------------------------------*
+*|Program Name: Z_FIND_USER_EXIT_AND_BADI                     |*
+*|Author      : Mansih Verma                                  |*
+*|Purpose     : This program identifies all the userexist     |*
+*|              and BADI for a selected transaction code      |*
+*|             (select using selection scrn)                  |*
+*|Date        : 14-06-2010                                    |*
+*|Verndor     : IBM                                           |*
+*|Usability   : Useful for SAP consultants for finding        |*
+*|              right user-exit & BADI's in a customer        |*
+*|              business process.                             |*
+*|************************************************************|*
+*|MOD LOG:                                                    |*
+*|------------------------------------------------------------|*
+*|NO  | DATE   |AUTHOR                      |CTS REQUEST      |*
+*|------------------------------------------------------------|*
+*|01  |        |                            |                 |*
+*|------------------------------------------------------------|*
+****************************************************************
+REPORT Z_FIND_EXIT_BADI.
+
+
+TYPE-POOLS: slis.
+TABLES : tstc   ,
+         tadir  ,
+         modsapt,
+         modact ,
+         trdir  ,
+         tfdir  ,
+         enlfdir,
+         tstct  .
+* Type of internal table to hold badi list
+TYPES : BEGIN OF ty_badi_list,
+          obj_name TYPE sobj_name ,  " Object Name in Object Directory
+          devclass TYPE devi_class,  " Function Group Package
+          dlvunit  TYPE dlvunit,     " Software Component
+          imp_name TYPE exit_imp,    " Business Add-In Implementation
+          text     TYPE sxc_attrt-text, " Exit: Implementation side: Text table
+        END OF ty_badi_list.
+
+* Internal Tables
+DATA: BEGIN OF jtab OCCURS 0.
+    INCLUDE STRUCTURE tadir.
+DATA:   modtext LIKE modsapt-modtext.
+DATA: END OF jtab.
+
+DATA : t_badi_list  TYPE STANDARD TABLE OF ty_badi_list,
+       wa_badi_list TYPE ty_badi_list.
+
+* Data defintion
+DATA : field1(30) TYPE c.
+DATA : v_devclass    LIKE tadir-devclass,
+       v_index(10)   TYPE c,
+       v_fld_nam(30) TYPE c.
+
+DATA : t_fieldcat TYPE slis_t_fieldcat_alv, "fieldcatalog table
+       w_fieldcat TYPE slis_fieldcat_alv,   "workarea for fieldcatalog
+       g_layout   TYPE slis_layout_alv,     "Layout
+       t_sort     TYPE slis_t_sortinfo_alv,
+       w_prog     TYPE sy-repid.
+
+*Constants
+CONSTANTS: c_pgmid LIKE tadir-pgmid  VALUE 'R3TR',
+           c_objct LIKE tadir-object VALUE 'PROG',
+           c_pgtyp LIKE trdir-subc   VALUE 'F',
+           c_fungr LIKE tadir-object VALUE 'FUGR',
+           c_smod  LIKE tadir-object VALUE 'SMOD'.
+
+*Parameters
+PARAMETERS : p_tcode LIKE tstc-tcode OBLIGATORY.
+
+*----------------------------------------------------------*
+*            START-OF-SELECTOIN                            *
+*----------------------------------------------------------*
+START-OF-SELECTION.
+
+* To Get transaction code description
+  SELECT SINGLE * FROM tstc WHERE tcode EQ p_tcode.
+  IF sy-subrc NE 0.
+    FORMAT COLOR COL_NEGATIVE INTENSIFIED ON.
+    WRITE:/(95) 'Transaction Code Does Not Exist'(e01).
+  ELSE.
+*   Fetch User Exits from tables
+    PERFORM get_userexit_details.
+*  Display user exits
+    PERFORM dispay_exits.
+
+*  Fetch BADIs
+    PERFORM get_badis.
+*  Display BADIs
+    PERFORM display_badi.
+
+  ENDIF.
+
+AT LINE-SELECTION.
+
+* When user clicks on the exit / BAdI - call corresponding transaction
+  PERFORM display_exit_details.
+
+*&---------------------------------------------------------*
+*&      Form  get_userexit_details
+*&---------------------------------------------------------*
+* Perform necessary selections from tables to get all user
+* exits from system tables.
+*----------------------------------------------------------*
+* Read User Exits and its description from various system tables
+
+FORM get_userexit_details.
+  SELECT SINGLE *
+        FROM tadir
+       WHERE pgmid    EQ c_pgmid
+         AND object   EQ c_objct
+         AND obj_name EQ tstc-pgmna.
+  MOVE : tadir-devclass TO v_devclass.
+  IF sy-subrc NE 0.
+    SELECT SINGLE *
+           FROM trdir
+          WHERE name EQ tstc-pgmna.
+    IF trdir-subc EQ c_pgtyp.
+      SELECT SINGLE *
+             FROM tfdir
+            WHERE pname EQ tstc-pgmna.
+      SELECT SINGLE *
+             FROM enlfdir
+            WHERE funcname EQ tfdir-funcname.
+      SELECT SINGLE *
+             FROM tadir
+            WHERE pgmid    EQ c_pgmid
+              AND object   EQ c_fungr
+              AND obj_name EQ enlfdir-area.
+
+      MOVE : tadir-devclass TO v_devclass.
+    ENDIF.
+  ENDIF.
+  SELECT *
+    FROM tadir
+    INTO TABLE jtab
+   WHERE pgmid    EQ c_pgmid
+     AND object   EQ c_smod
+     AND devclass EQ v_devclass.
+  SELECT SINGLE *
+         FROM tstct
+        WHERE sprsl EQ sy-langu
+          AND tcode EQ p_tcode.
+
+  IF NOT jtab[] IS INITIAL.
+    LOOP AT jtab.
+      SELECT SINGLE *
+             FROM  modsapt
+            WHERE  sprsl EQ sy-langu
+               AND name  EQ jtab-obj_name.
+      MOVE: modsapt-modtext TO jtab-modtext.
+      MODIFY jtab.
+    ENDLOOP.
+  ENDIF.
+ENDFORM.                    " get_userexit_details
+*&---------------------------------------------------------------------*
+*&      Form  GET_BADIS
+*&---------------------------------------------------------------------*
+FORM get_badis .
+* select the BAdI Definitions from the tables sxc_exit and sxc_attr
+
+  SELECT t~obj_name
+         t~devclass
+         tc~dlvunit
+         sx~imp_name
+         sat~text
+    INTO TABLE t_badi_list
+    FROM ( ( ( ( tadir AS t INNER JOIN tdevc AS tc ON t~devclass = tc~devclass )
+    INNER JOIN sxc_exit AS sx ON sx~exit_name = t~obj_name )
+    INNER JOIN sxc_attr AS sa ON sx~imp_name = sa~imp_name )
+    INNER JOIN sxc_attrt AS sat ON sx~imp_name = sat~imp_name )
+    WHERE t~pgmid    = 'R3TR' AND
+          t~object   = 'SXSD' AND
+          t~devclass = v_devclass AND
+          sat~sprsl  = sy-langu.
+
+* To delete adjacent duplicate records in the BAdIs list
+  SORT t_badi_list.
+  DELETE ADJACENT DUPLICATES FROM t_badi_list.
+
+ENDFORM.                    " GET_BADIS
+*&---------------------------------------------------------------------*
+*&      Form  DISPLAY_BADI
+*&---------------------------------------------------------------------*
+FORM display_badi .
+  FORMAT COLOR COL_NORMAL INTENSIFIED OFF.
+  DESCRIBE TABLE t_badi_list.
+  SKIP.
+  FORMAT COLOR COL_TOTAL INTENSIFIED ON.
+
+* If at least one BAdI found then display it
+  IF sy-tfill > 0.
+    WRITE:/1 'Number of BAdIs found for',27 p_tcode, 37 ':', 38 sy-tfill.
+* If no BAdI's found then display the message & Exit
+  ELSEIF sy-tfill = 0.
+    FORMAT COLOR COL_NEGATIVE INTENSIFIED ON.
+    WRITE:/1(102) 'Sorry, No BADis exists for:', 29 p_tcode.
+    EXIT.
+  ENDIF.
+* Heading - BAdI & Description  skip.
+  WRITE:/(102) sy-uline.
+  FORMAT COLOR COL_HEADING INTENSIFIED ON.
+  WRITE: /1 sy-vline,
+          2 'S.No',
+          7 sy-vline,
+          9 'Badi Name',
+          30 sy-vline,
+          31 'Description',
+          102 sy-vline.
+  WRITE:/(102) sy-uline.
+  FORMAT RESET.
+* List all the BAdI's and Description
+  FORMAT COLOR COL_NORMAL INTENSIFIED OFF.
+  LOOP AT t_badi_list INTO wa_badi_list .
+    v_index = sy-tabix.
+    WRITE:/1 sy-vline,
+           2 v_index+5(5),
+           7 sy-vline,
+           9 wa_badi_list-obj_name HOTSPOT ON,
+           30 sy-vline,
+           31 wa_badi_list-text,
+           102 sy-vline.
+
+    CLEAR wa_badi_list.
+  ENDLOOP.
+
+  WRITE:/(102) sy-uline.
+
+ENDFORM.                    "DISPLAY_BADI
+*&---------------------------------------------------------------------*
+*&      Form  DISPAY_EXITS
+*&---------------------------------------------------------------------*
+FORM dispay_exits .
+
+  FORMAT COLOR COL_NORMAL INTENSIFIED OFF.
+* To find number of exits for given transaction
+  DESCRIBE TABLE jtab.
+  SKIP.
+  FORMAT COLOR COL_TOTAL INTENSIFIED ON.
+
+* If at least 1 exit found
+  IF sy-tfill > 0.
+    WRITE:/1 'Number of Exits found for',27 p_tcode,37 ':', 38 sy-tfill.
+* IF No exits found
+  ELSEIF sy-tfill = 0.
+    FORMAT COLOR COL_NEGATIVE INTENSIFIED ON.
+    WRITE:/1(102) 'Sorry, No Exits exists for:', 29 p_tcode.
+    EXIT.
+  ENDIF.
+
+  WRITE:/(102) sy-uline.
+  FORMAT COLOR COL_HEADING INTENSIFIED ON.
+  WRITE: /1 sy-vline,
+         2 'S.No',
+         7 sy-vline,
+         9 'Exit Name',
+         28 sy-vline,
+         29 'Description',
+         102 sy-vline.
+  WRITE:/(102) sy-uline.
+
+  FORMAT COLOR COL_NORMAL INTENSIFIED OFF.
+
+  LOOP AT jtab.
+    v_index = sy-tabix.
+    WRITE: /1 sy-vline,
+            2 v_index+5(5),
+            7 sy-vline,
+            9 jtab-obj_name HOTSPOT ON,
+            28 sy-vline,
+            29 jtab-modtext,
+            102 sy-vline.
+
+    CLEAR jtab.
+  ENDLOOP.
+  WRITE:/(102) sy-uline.
+
+ENDFORM.                    " DISPAY_EXITS
+*&---------------------------------------------------------------------*
+*&      Form  DISPLAY_EXIT_DETAILS
+*&---------------------------------------------------------------------*
+FORM display_exit_details .
+
+* GET CURSOR COMMAND get the line details.
+  GET CURSOR FIELD v_fld_nam.
+
+* If user clicks on User exit / Description
+  IF v_fld_nam EQ 'JTAB-OBJ_NAME'.
+
+    SET PARAMETER ID 'MON' FIELD sy-lisel+8(10).
+    CALL TRANSACTION 'SMOD' AND SKIP FIRST SCREEN.
+
+* If user clicks on BAdI / Description
+  ELSEIF v_fld_nam EQ 'WA_BADI_LIST-OBJ_NAME'.
+
+    CALL FUNCTION 'SXO_BADI_SHOW'
+      EXPORTING
+        exit_name = sy-lisel+8(20)
+                    EXCEPTIONS
+                    action_canceled
+                    access_failure
+                    badi_not_exixting.
+* Error messages
+    IF sy-subrc = 1.
+      MESSAGE e208(00) WITH 'Action Canceled'.
+    ELSEIF sy-subrc = 2.
+      MESSAGE e208(00) WITH 'Access Failure'.
+    ELSEIF sy-subrc = 3.
+      MESSAGE e208(00) WITH 'BAdi does not exist'.
+    ENDIF.
+  ENDIF.
+
+ENDFORM.                    " DISPLAY_EXIT_DETAILS
