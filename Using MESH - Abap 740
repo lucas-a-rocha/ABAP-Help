@@ -1,0 +1,63 @@
+*&---------------------------------------------------------------------*
+*& Report ZTESTELR3
+*&---------------------------------------------------------------------*
+REPORT ztestelr3.
+TYPES: BEGIN OF ty_manager,
+         row    TYPE i,
+         name   TYPE c LENGTH 10,
+         salary TYPE n LENGTH 4,
+       END OF ty_manager.
+TYPES tt_manager TYPE STANDARD TABLE OF ty_manager WITH EMPTY KEY.
+
+TYPES: BEGIN OF ty_developer,
+         row     TYPE i,
+         name    TYPE c LENGTH 10,
+         salary  TYPE n LENGTH 4,
+         manager TYPE c LENGTH 10,
+       END OF ty_developer.
+TYPES tt_developer TYPE STANDARD TABLE OF ty_developer WITH EMPTY KEY.
+
+TYPES: BEGIN OF MESH m_team,
+         managers   TYPE tt_manager   ASSOCIATION my_employee TO developers ON manager = name,
+         developers TYPE tt_developer ASSOCIATION my_manager  TO managers   ON name = manager,
+       END OF MESH m_team.
+
+DATA(lt_manager) = VALUE tt_manager(
+  ( row = 1 name = 'Jason'  salary = 3000 )
+  ( row = 2	name = 'Thomas'	salary = 3200 )
+).
+
+DATA(lt_developer) = VALUE tt_developer(
+  ( row = 1 name = 'Bob'  salary = 2100 manager = 'Jason' )
+  ( row = 2 name = 'David'  salary = 2000 manager = 'Thomas' )
+  ( row = 3 name = 'Jack'  salary = 1000 manager = 'Thomas' )
+  ( row = 4 name = 'Jerry'  salary = 1000 manager = 'Jason' )
+  ( row = 5 name = 'John'  salary = 2100 manager = 'Thomas' )
+  ( row = 6 name = 'Tom'  salary = 2000 manager = 'Jason' )
+).
+
+DATA: ls_team TYPE m_team.
+ls_team-managers   = lt_manager.
+ls_team-developers = lt_developer.
+
+*Get details of Jerry's manager *
+
+"get line of dev table
+
+ASSIGN lt_developer[ name = 'Jerry' ] TO FIELD-SYMBOL(<ls_jerry>).
+DATA(ls_jmanager) =  ls_team-developers\my_manager[ <ls_jerry> ].
+
+WRITE: / |Jerry's manager: { ls_jmanager-name }|,30
+         |Salary: { ls_jmanager-salary }|.
+
+"Get Thomas' developers
+SKIP.
+WRITE: / |Thomas' developers:|.
+
+"line of manager table
+ASSIGN lt_manager[ name = 'Thomas' ] TO FIELD-SYMBOL(<ls_thomas>).
+LOOP AT ls_team-managers\my_employee[ <ls_thomas> ] ASSIGNING FIELD-SYMBOL(<ls_emp>).
+  WRITE: / |Employee name: { <ls_emp>-name }|.
+ENDLOOP.
+
+BREAK-POINT.
