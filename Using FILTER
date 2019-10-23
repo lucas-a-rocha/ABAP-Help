@@ -1,0 +1,30 @@
+*&---------------------------------------------------------------------*
+*& Report ZTESTELR3
+*&---------------------------------------------------------------------*
+REPORT ztestelr3.
+TYPES: BEGIN OF ty_filter,
+         cityfrom TYPE spfli-cityfrom,
+         cityto   TYPE spfli-cityto,
+         f3       TYPE i,
+       END OF ty_filter,
+       ty_filter_tab TYPE HASHED TABLE OF ty_filter
+
+                     WITH UNIQUE KEY cityfrom cityto.
+DATA: lt_splfi TYPE STANDARD TABLE OF spfli.
+
+SELECT * FROM spfli APPENDING TABLE lt_splfi.
+
+DATA(lt_filter) = VALUE ty_filter_tab( f3 = 2
+                          ( cityfrom = 'NEW YORK2'  cityto  = 'SAN FRANCISCO' )
+                          ( cityfrom = 'FRANKFURT2' cityto  = 'NEW YORK' )  ).
+
+DATA(lt_myrecs) = FILTER #( lt_splfi IN lt_filter
+                            WHERE cityfrom = cityfrom
+                            AND cityto = cityto ).
+
+"Output filtered records
+LOOP AT lt_myrecs ASSIGNING FIELD-SYMBOL(<ls_rec>).
+  WRITE: / <ls_rec>-carrid,8 <ls_rec>-cityfrom,30
+           <ls_rec>-cityto,45 <ls_rec>-deptime.
+ENDLOOP.
+BREAK-POINT.
