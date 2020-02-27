@@ -1,0 +1,839 @@
+**********************************************************************
+* Public Section of Class
+**********************************************************************
+CLASS zcl_bal_log DEFINITION
+  PUBLIC
+  FINAL
+  CREATE PUBLIC .
+
+  PUBLIC SECTION.
+
+    METHODS criterio_pesquisa
+      IMPORTING
+        !i_object         TYPE balhdr-object
+        !i_subobject      TYPE balhdr-subobject
+        !i_extnumber      TYPE balhdr-extnumber OPTIONAL
+        !i_aldate_from    TYPE balhdr-aldate
+        !i_aldate_to      TYPE balhdr-aldate OPTIONAL
+        !i_altime_from    TYPE balhdr-altime OPTIONAL
+        !i_altime_to      TYPE balhdr-altime OPTIONAL
+        !i_probclass_from TYPE balhdr-probclass OPTIONAL
+        !i_probclass_to   TYPE balhdr-probclass OPTIONAL
+        !i_alprog         TYPE balhdr-alprog OPTIONAL
+        !i_altcode        TYPE balhdr-altcode OPTIONAL
+        !i_aluser         TYPE balhdr-aluser OPTIONAL
+        !i_almode         TYPE balhdr-almode OPTIONAL
+      RAISING
+        cx_oo_message .
+    METHODS constructor
+      IMPORTING
+        !log_struc       TYPE bal_s_log OPTIONAL
+        !adicional_struc TYPE string OPTIONAL
+      RAISING
+        cx_oo_message .
+    METHODS add_msg
+      IMPORTING
+        !msg_type         TYPE symsgty
+        !msgno            TYPE symsgno
+        !msgid            TYPE any
+        !attr1            TYPE any OPTIONAL
+        !attr2            TYPE any OPTIONAL
+        !attr3            TYPE any OPTIONAL
+        !attr4            TYPE any OPTIONAL
+        !dados_adicionais TYPE any OPTIONAL
+      RETURNING
+        VALUE(msg_handle) TYPE balmsghndl .
+    METHODS add_msg_bapiret
+      IMPORTING
+        !is_bapiret       TYPE bapiret2
+        !dados_adicionais TYPE any OPTIONAL
+      RETURNING
+        VALUE(msg_handle) TYPE balmsghndl .
+    METHODS display_log
+      IMPORTING
+        !titulo    TYPE string OPTIONAL
+        !start_col TYPE balcoord OPTIONAL
+        !start_row TYPE balcoord OPTIONAL
+        !end_col   TYPE balcoord OPTIONAL
+        !end_row   TYPE balcoord OPTIONAL
+        !show_all  TYPE bal_s_prof-show_all OPTIONAL
+          PREFERRED PARAMETER titulo
+      RAISING
+        cx_oo_message .
+    METHODS salvar .
+    METHODS criterio_pesquisa_range
+      IMPORTING
+        !campo TYPE fieldname
+        !range TYPE STANDARD TABLE .
+    METHODS add_msg_table
+      IMPORTING
+        !bapiret          TYPE bapiret2_t
+        !dados_adicionais TYPE any OPTIONAL .
+    METHODS get_qtd_msg
+      RETURNING
+        VALUE(cont) TYPE i .
+    METHODS add_free_text
+      IMPORTING
+        !msg_type TYPE symsgty
+        !text     TYPE c .
+    METHODS criterio_pesquisa_range_msg
+      IMPORTING
+        !campo TYPE fieldname
+        !range TYPE STANDARD TABLE .
+    METHODS add_free_text_ext
+      IMPORTING
+        !msg_type         TYPE symsgty
+        !text             TYPE c
+        !dados_adicionais TYPE any OPTIONAL .
+    METHODS display_log_2
+      IMPORTING
+        !titulo    TYPE string OPTIONAL
+        !start_col TYPE balcoord OPTIONAL
+        !start_row TYPE balcoord OPTIONAL
+        !end_col   TYPE balcoord OPTIONAL
+        !end_row   TYPE balcoord OPTIONAL
+      RAISING
+        cx_oo_message .
+    METHODS elimina_log
+      IMPORTING
+        !object        TYPE balhdr-object
+        !subobject     TYPE balhdr-subobject
+      RETURNING
+        VALUE(bapiret) TYPE bapiret2 .
+  PROTECTED SECTION.
+  PRIVATE SECTION.
+**********************************************************************
+* Private Section of Class
+**********************************************************************
+**********************************************************************
+*  Protected Section of Class
+**********************************************************************
+*protected section.
+
+    DATA log_handle TYPE balloghndl .
+    DATA estrutura_adicionais TYPE tabname .
+    DATA context_filter TYPE bal_t_cfil .
+    DATA message_filter TYPE bal_s_mfil .
+    DATA log_handle_t TYPE bal_t_logh .
+    DATA cont TYPE i .
+
+    METHODS determina_probclass
+      IMPORTING
+        !msg_type        TYPE symsgty
+      RETURNING
+        VALUE(probclass) TYPE bal_s_msg-probclass .
+    METHODS monta_fieldcatlog
+      RETURNING
+        VALUE(display_profile) TYPE bal_s_prof .
+ENDCLASS.
+
+
+
+CLASS zcl_bal_log IMPLEMENTATION.
+
+
+* <SIGNATURE>---------------------------------------------------------------------------------------+
+* | Instance Public Method ZCL_BAL_LOG->ADD_FREE_TEXT
+* +-------------------------------------------------------------------------------------------------+
+* | [--->] MSG_TYPE                       TYPE        SYMSGTY
+* | [--->] TEXT                           TYPE        C
+* +--------------------------------------------------------------------------------------</SIGNATURE>
+  METHOD add_free_text.
+    DATA: vl_probclass TYPE bal_s_msg-probclass.
+
+    vl_probclass = me->determina_probclass( msg_type  ).
+
+    CALL FUNCTION 'BAL_LOG_MSG_ADD_FREE_TEXT'
+      EXPORTING
+        i_log_handle     = me->log_handle
+        i_msgty          = msg_type
+        i_probclass      = vl_probclass
+        i_text           = text
+      EXCEPTIONS
+        log_not_found    = 1
+        msg_inconsistent = 2
+        log_is_full      = 3
+        OTHERS           = 4.
+
+    ADD 1 TO me->cont.
+  ENDMETHOD.
+
+
+* <SIGNATURE>---------------------------------------------------------------------------------------+
+* | Instance Public Method ZCL_BAL_LOG->ADD_FREE_TEXT_EXT
+* +-------------------------------------------------------------------------------------------------+
+* | [--->] MSG_TYPE                       TYPE        SYMSGTY
+* | [--->] TEXT                           TYPE        C
+* | [--->] DADOS_ADICIONAIS               TYPE        ANY(optional)
+* +--------------------------------------------------------------------------------------</SIGNATURE>
+  METHOD add_free_text_ext.
+    DATA:
+      sl_context   TYPE bal_s_cont,
+      vl_probclass TYPE bal_s_msg-probclass.
+
+    vl_probclass = me->determina_probclass( msg_type  ).
+
+    IF me->estrutura_adicionais IS NOT INITIAL.
+
+      sl_context-tabname = me->estrutura_adicionais.
+
+      cl_abap_container_utilities=>fill_container_c( EXPORTING  im_value               = dados_adicionais
+                                                     IMPORTING  ex_container           = sl_context-value
+                                                     EXCEPTIONS illegal_parameter_type = 1
+                                                     OTHERS                            = 2 ).
+    ENDIF.
+
+    CALL FUNCTION 'BAL_LOG_MSG_ADD_FREE_TEXT'
+      EXPORTING
+        i_log_handle     = me->log_handle
+        i_msgty          = msg_type
+        i_probclass      = vl_probclass
+        i_text           = text
+        i_s_context      = sl_context
+      EXCEPTIONS
+        log_not_found    = 1
+        msg_inconsistent = 2
+        log_is_full      = 3
+        OTHERS           = 4.
+
+    ADD 1 TO me->cont.
+  ENDMETHOD.
+
+
+* <SIGNATURE>---------------------------------------------------------------------------------------+
+* | Instance Public Method ZCL_BAL_LOG->ADD_MSG
+* +-------------------------------------------------------------------------------------------------+
+* | [--->] MSG_TYPE                       TYPE        SYMSGTY
+* | [--->] MSGNO                          TYPE        SYMSGNO
+* | [--->] MSGID                          TYPE        ANY
+* | [--->] ATTR1                          TYPE        ANY(optional)
+* | [--->] ATTR2                          TYPE        ANY(optional)
+* | [--->] ATTR3                          TYPE        ANY(optional)
+* | [--->] ATTR4                          TYPE        ANY(optional)
+* | [--->] DADOS_ADICIONAIS               TYPE        ANY(optional)
+* | [<-()] MSG_HANDLE                     TYPE        BALMSGHNDL
+* +--------------------------------------------------------------------------------------</SIGNATURE>
+  METHOD add_msg.
+*----------------------------------------------------------------------*
+* Estrutura Local -----------------------------------------------------*
+*----------------------------------------------------------------------*
+    DATA: wl_msg TYPE bal_s_msg.
+
+
+    wl_msg-msgty      = msg_type.
+    wl_msg-msgid      = msgid.
+    wl_msg-msgno      = msgno.
+    wl_msg-msgv1      = attr1.
+    wl_msg-msgv2      = attr2.
+    wl_msg-msgv3      = attr3.
+    wl_msg-msgv4      = attr4.
+    wl_msg-probclass  = me->determina_probclass( msg_type ).
+
+    GET TIME STAMP FIELD wl_msg-time_stmp.
+
+
+    IF me->estrutura_adicionais IS NOT INITIAL.
+
+      wl_msg-context-tabname = me->estrutura_adicionais.
+
+      cl_abap_container_utilities=>fill_container_c( EXPORTING  im_value               = dados_adicionais
+                                                     IMPORTING  ex_container           = wl_msg-context-value
+                                                     EXCEPTIONS illegal_parameter_type = 1
+                                                     OTHERS                            = 2 ).
+    ENDIF.
+
+    CALL FUNCTION 'BAL_LOG_MSG_ADD'
+      EXPORTING
+        i_log_handle     = me->log_handle
+        i_s_msg          = wl_msg
+      IMPORTING
+        e_s_msg_handle   = msg_handle
+      EXCEPTIONS
+        log_not_found    = 1
+        msg_inconsistent = 2
+        log_is_full      = 3
+        OTHERS           = 4.
+
+    IF sy-subrc IS INITIAL.
+
+      ADD 1 TO me->cont.
+
+    ENDIF.
+  ENDMETHOD.
+
+
+* <SIGNATURE>---------------------------------------------------------------------------------------+
+* | Instance Public Method ZCL_BAL_LOG->ADD_MSG_BAPIRET
+* +-------------------------------------------------------------------------------------------------+
+* | [--->] IS_BAPIRET                     TYPE        BAPIRET2
+* | [--->] DADOS_ADICIONAIS               TYPE        ANY(optional)
+* | [<-()] MSG_HANDLE                     TYPE        BALMSGHNDL
+* +--------------------------------------------------------------------------------------</SIGNATURE>
+  METHOD add_msg_bapiret.
+*----------------------------------------------------------------------*
+* Estrutura Local -----------------------------------------------------*
+*----------------------------------------------------------------------*
+    DATA: wl_msg TYPE bal_s_msg.
+
+    wl_msg-msgty = is_bapiret-type.
+    wl_msg-msgid = is_bapiret-id.
+    wl_msg-msgno = is_bapiret-number.
+    wl_msg-msgv1 = is_bapiret-message_v1.
+    wl_msg-msgv2 = is_bapiret-message_v2.
+    wl_msg-msgv3 = is_bapiret-message_v3.
+    wl_msg-msgv4 = is_bapiret-message_v4.
+    wl_msg-probclass  = me->determina_probclass( is_bapiret-type ).
+
+    GET TIME STAMP FIELD wl_msg-time_stmp.
+
+
+    IF me->estrutura_adicionais IS NOT INITIAL.
+
+      wl_msg-context-tabname = me->estrutura_adicionais.
+
+      cl_abap_container_utilities=>fill_container_c( EXPORTING  im_value               = dados_adicionais
+                                                     IMPORTING  ex_container           = wl_msg-context-value
+                                                     EXCEPTIONS illegal_parameter_type = 1
+                                                     OTHERS                            = 2 ).
+    ENDIF.
+
+    CALL FUNCTION 'BAL_LOG_MSG_ADD'
+      EXPORTING
+        i_log_handle     = me->log_handle
+        i_s_msg          = wl_msg
+      IMPORTING
+        e_s_msg_handle   = msg_handle
+      EXCEPTIONS
+        log_not_found    = 1
+        msg_inconsistent = 2
+        log_is_full      = 3
+        OTHERS           = 4.
+
+    IF sy-subrc IS INITIAL.
+
+      ADD 1 TO me->cont.
+
+    ENDIF.
+  ENDMETHOD.
+
+
+* <SIGNATURE>---------------------------------------------------------------------------------------+
+* | Instance Public Method ZCL_BAL_LOG->ADD_MSG_TABLE
+* +-------------------------------------------------------------------------------------------------+
+* | [--->] BAPIRET                        TYPE        BAPIRET2_T
+* | [--->] DADOS_ADICIONAIS               TYPE        ANY(optional)
+* +--------------------------------------------------------------------------------------</SIGNATURE>
+  METHOD add_msg_table.
+    LOOP AT bapiret ASSIGNING FIELD-SYMBOL(<fs_bapiret>).
+
+      me->add_msg( msg_type         = <fs_bapiret>-type
+                   msgno            = <fs_bapiret>-number
+                   msgid            = <fs_bapiret>-id
+                   attr1            = <fs_bapiret>-message_v1
+                   attr2            = <fs_bapiret>-message_v2
+                   attr3            = <fs_bapiret>-message_v3
+                   attr4            = <fs_bapiret>-message_v4
+                   dados_adicionais = dados_adicionais        ).
+
+    ENDLOOP.
+
+  ENDMETHOD.
+
+
+* <SIGNATURE>---------------------------------------------------------------------------------------+
+* | Instance Public Method ZCL_BAL_LOG->CONSTRUCTOR
+* +-------------------------------------------------------------------------------------------------+
+* | [--->] LOG_STRUC                      TYPE        BAL_S_LOG(optional)
+* | [--->] ADICIONAL_STRUC                TYPE        STRING(optional)
+* | [!CX!] CX_OO_MESSAGE
+* +--------------------------------------------------------------------------------------</SIGNATURE>
+  METHOD constructor.
+    me->estrutura_adicionais = adicional_struc.
+
+    CHECK log_struc IS NOT INITIAL.
+
+    CALL FUNCTION 'BAL_LOG_CREATE'
+      EXPORTING
+        i_s_log                 = log_struc
+      IMPORTING
+        e_log_handle            = me->log_handle
+      EXCEPTIONS
+        log_header_inconsistent = 1
+        OTHERS                  = 2.
+
+    IF sy-subrc IS NOT INITIAL.
+      RAISE EXCEPTION TYPE cx_oo_message.
+    ENDIF.
+
+  ENDMETHOD.
+
+
+* <SIGNATURE>---------------------------------------------------------------------------------------+
+* | Instance Public Method ZCL_BAL_LOG->CRITERIO_PESQUISA
+* +-------------------------------------------------------------------------------------------------+
+* | [--->] I_OBJECT                       TYPE        BALHDR-OBJECT
+* | [--->] I_SUBOBJECT                    TYPE        BALHDR-SUBOBJECT
+* | [--->] I_EXTNUMBER                    TYPE        BALHDR-EXTNUMBER(optional)
+* | [--->] I_ALDATE_FROM                  TYPE        BALHDR-ALDATE
+* | [--->] I_ALDATE_TO                    TYPE        BALHDR-ALDATE(optional)
+* | [--->] I_ALTIME_FROM                  TYPE        BALHDR-ALTIME(optional)
+* | [--->] I_ALTIME_TO                    TYPE        BALHDR-ALTIME(optional)
+* | [--->] I_PROBCLASS_FROM               TYPE        BALHDR-PROBCLASS(optional)
+* | [--->] I_PROBCLASS_TO                 TYPE        BALHDR-PROBCLASS(optional)
+* | [--->] I_ALPROG                       TYPE        BALHDR-ALPROG(optional)
+* | [--->] I_ALTCODE                      TYPE        BALHDR-ALTCODE(optional)
+* | [--->] I_ALUSER                       TYPE        BALHDR-ALUSER(optional)
+* | [--->] I_ALMODE                       TYPE        BALHDR-ALMODE(optional)
+* | [!CX!] CX_OO_MESSAGE
+* +--------------------------------------------------------------------------------------</SIGNATURE>
+  METHOD criterio_pesquisa.
+    DATA: tl_log_handle TYPE balhdr_t.
+
+    DATA: wl_log_filter TYPE bal_s_lfil.
+
+    DATA: vl_altimef TYPE balhdr-altime,
+          vl_altimet TYPE balhdr-altime,
+          vl_data_to TYPE sy-datum.
+
+
+
+    IF i_altime_from IS INITIAL AND
+       i_altime_to   IS INITIAL.
+
+      vl_altimef = '000000'.
+      vl_altimet = '235959'.
+    ELSE.
+
+      vl_altimef = i_altime_from.
+      vl_altimet = i_altime_to.
+    ENDIF.
+
+
+    IF i_aldate_to IS INITIAL.
+
+      vl_data_to = sy-datum.
+    ELSE.
+
+      vl_data_to = i_aldate_to.
+    ENDIF.
+
+
+    CALL FUNCTION 'BAL_FILTER_CREATE'
+      EXPORTING
+        i_object         = i_object
+        i_subobject      = i_subobject
+        i_extnumber      = i_extnumber
+        i_aldate_from    = i_aldate_from
+        i_aldate_to      = vl_data_to
+        i_altime_from    = vl_altimef
+        i_altime_to      = vl_altimet
+        i_probclass_from = i_probclass_from
+        i_probclass_to   = i_probclass_to
+        i_alprog         = i_alprog
+        i_altcode        = i_altcode
+        i_aluser         = i_aluser
+        i_almode         = i_almode
+      IMPORTING
+        e_s_log_filter   = wl_log_filter.
+
+
+    CALL FUNCTION 'BAL_DB_SEARCH'
+      EXPORTING
+        i_s_log_filter     = wl_log_filter
+      IMPORTING
+        e_t_log_header     = tl_log_handle
+      EXCEPTIONS
+        log_not_found      = 1
+        no_filter_criteria = 2
+        OTHERS             = 3.
+
+    IF sy-subrc IS NOT INITIAL.
+      RAISE EXCEPTION TYPE cx_oo_message.
+    ENDIF.
+
+
+    LOOP AT tl_log_handle ASSIGNING FIELD-SYMBOL(<fs_log_handle>).
+      INSERT <fs_log_handle>-log_handle INTO TABLE me->log_handle_t.
+    ENDLOOP.
+
+    CALL FUNCTION 'BAL_DB_LOAD'
+      EXPORTING
+        i_t_log_handle     = me->log_handle_t
+      EXCEPTIONS
+        no_logs_specified  = 1
+        log_not_found      = 2
+        log_already_loaded = 3
+        OTHERS             = 4.
+  ENDMETHOD.
+
+
+* <SIGNATURE>---------------------------------------------------------------------------------------+
+* | Instance Public Method ZCL_BAL_LOG->CRITERIO_PESQUISA_RANGE
+* +-------------------------------------------------------------------------------------------------+
+* | [--->] CAMPO                          TYPE        FIELDNAME
+* | [--->] RANGE                          TYPE        STANDARD TABLE
+* +--------------------------------------------------------------------------------------</SIGNATURE>
+  METHOD criterio_pesquisa_range.
+    DATA: wl_context_filter TYPE bal_s_cfil,
+          wl_range          TYPE bal_rfield.
+
+    FIELD-SYMBOLS: <fs_valor> TYPE any.
+
+    wl_context_filter-tabname   = me->estrutura_adicionais.
+    wl_context_filter-fieldname = campo.
+
+
+    LOOP AT range ASSIGNING FIELD-SYMBOL(<fs_range>).
+
+      ASSIGN COMPONENT 'SIGN' OF STRUCTURE <fs_range> TO <fs_valor>.
+
+      IF sy-subrc IS INITIAL.
+        wl_range-sign = <fs_valor>.
+      ENDIF.
+
+      ASSIGN COMPONENT 'OPTION' OF STRUCTURE <fs_range> TO <fs_valor>.
+
+      IF sy-subrc IS INITIAL.
+        wl_range-option = <fs_valor>.
+      ENDIF.
+
+      ASSIGN COMPONENT 'LOW' OF STRUCTURE <fs_range> TO <fs_valor>.
+
+      IF sy-subrc IS INITIAL.
+        wl_range-low = <fs_valor>.
+      ENDIF.
+
+      ASSIGN COMPONENT 'HIGH' OF STRUCTURE <fs_range> TO <fs_valor>.
+
+      IF sy-subrc IS INITIAL.
+        wl_range-high = <fs_valor>.
+      ENDIF.
+
+      APPEND wl_range TO wl_context_filter-t_range.
+      CLEAR wl_range.
+
+    ENDLOOP.
+
+    INSERT wl_context_filter INTO TABLE me->context_filter.
+  ENDMETHOD.
+
+
+* <SIGNATURE>---------------------------------------------------------------------------------------+
+* | Instance Public Method ZCL_BAL_LOG->CRITERIO_PESQUISA_RANGE_MSG
+* +-------------------------------------------------------------------------------------------------+
+* | [--->] CAMPO                          TYPE        FIELDNAME
+* | [--->] RANGE                          TYPE        STANDARD TABLE
+* +--------------------------------------------------------------------------------------</SIGNATURE>
+  METHOD criterio_pesquisa_range_msg.
+    DATA:
+       wl_range TYPE bal_rfield.
+
+    FIELD-SYMBOLS:
+      <fs_table> TYPE STANDARD TABLE,
+      <fs_valor> TYPE any.
+
+    ASSIGN COMPONENT campo OF STRUCTURE me->message_filter TO <fs_table>.
+
+    LOOP AT range ASSIGNING FIELD-SYMBOL(<fs_range>).
+
+      ASSIGN COMPONENT 'SIGN' OF STRUCTURE <fs_range> TO <fs_valor>.
+
+      IF sy-subrc IS INITIAL.
+        wl_range-sign = <fs_valor>.
+      ENDIF.
+
+      ASSIGN COMPONENT 'OPTION' OF STRUCTURE <fs_range> TO <fs_valor>.
+
+      IF sy-subrc IS INITIAL.
+        wl_range-option = <fs_valor>.
+      ENDIF.
+
+      ASSIGN COMPONENT 'LOW' OF STRUCTURE <fs_range> TO <fs_valor>.
+
+      IF sy-subrc IS INITIAL.
+        wl_range-low = <fs_valor>.
+      ENDIF.
+
+      ASSIGN COMPONENT 'HIGH' OF STRUCTURE <fs_range> TO <fs_valor>.
+
+      IF sy-subrc IS INITIAL.
+        wl_range-high = <fs_valor>.
+      ENDIF.
+
+      APPEND wl_range TO <fs_table>.
+      CLEAR wl_range.
+
+    ENDLOOP.
+  ENDMETHOD.
+
+
+* <SIGNATURE>---------------------------------------------------------------------------------------+
+* | Instance Private Method ZCL_BAL_LOG->DETERMINA_PROBCLASS
+* +-------------------------------------------------------------------------------------------------+
+* | [--->] MSG_TYPE                       TYPE        SYMSGTY
+* | [<-()] PROBCLASS                      TYPE        BAL_S_MSG-PROBCLASS
+* +--------------------------------------------------------------------------------------</SIGNATURE>
+  METHOD determina_probclass.
+    CASE msg_type.
+
+      WHEN if_logger=>c_message_error.
+        probclass = if_logger=>c_probclass_high.
+
+      WHEN if_logger=>c_message_warning.
+        probclass = if_logger=>c_probclass_medium.
+
+      WHEN if_logger=>c_message_success.
+        probclass = if_logger=>c_probclass_low.
+
+      WHEN OTHERS.
+        probclass = if_logger=>c_probclass_default.
+
+    ENDCASE.
+
+  ENDMETHOD.
+
+
+* <SIGNATURE>---------------------------------------------------------------------------------------+
+* | Instance Public Method ZCL_BAL_LOG->DISPLAY_LOG
+* +-------------------------------------------------------------------------------------------------+
+* | [--->] TITULO                         TYPE        STRING(optional)
+* | [--->] START_COL                      TYPE        BALCOORD(optional)
+* | [--->] START_ROW                      TYPE        BALCOORD(optional)
+* | [--->] END_COL                        TYPE        BALCOORD(optional)
+* | [--->] END_ROW                        TYPE        BALCOORD(optional)
+* | [--->] SHOW_ALL                       TYPE        BAL_S_PROF-SHOW_ALL(optional)
+* | [!CX!] CX_OO_MESSAGE
+* +--------------------------------------------------------------------------------------</SIGNATURE>
+  METHOD display_log.
+    DATA: tl_log_handle TYPE bal_t_logh.
+    DATA: wl_display_profile TYPE bal_s_prof.
+
+    IF me->log_handle IS NOT INITIAL.
+      APPEND me->log_handle TO tl_log_handle.
+    ELSE.
+      APPEND LINES OF me->log_handle_t TO tl_log_handle.
+    ENDIF.
+
+    IF me->estrutura_adicionais IS NOT INITIAL.
+      wl_display_profile = me->monta_fieldcatlog( ).
+    ENDIF.
+
+    wl_display_profile-title = titulo.
+
+    wl_display_profile-start_col = start_col.
+    wl_display_profile-start_row = start_row.
+    wl_display_profile-end_col   = end_col.
+    wl_display_profile-end_row   = end_row.
+
+    IF show_all EQ abap_false.
+      wl_display_profile-show_all  = abap_true.
+    ELSE.
+      wl_display_profile-show_all  = show_all.
+    ENDIF.
+
+
+    CALL FUNCTION 'BAL_DSP_LOG_DISPLAY'
+      EXPORTING
+        i_t_log_handle         = tl_log_handle
+        i_s_msg_filter         = me->message_filter
+        i_t_msg_context_filter = me->context_filter
+        i_s_display_profile    = wl_display_profile
+      EXCEPTIONS
+        profile_inconsistent   = 1
+        internal_error         = 2
+        no_data_available      = 3
+        no_authority           = 4
+        OTHERS                 = 5.
+
+    IF sy-subrc IS NOT INITIAL.
+      RAISE EXCEPTION TYPE cx_oo_message.
+    ENDIF.
+  ENDMETHOD.
+
+
+* <SIGNATURE>---------------------------------------------------------------------------------------+
+* | Instance Public Method ZCL_BAL_LOG->DISPLAY_LOG_2
+* +-------------------------------------------------------------------------------------------------+
+* | [--->] TITULO                         TYPE        STRING(optional)
+* | [--->] START_COL                      TYPE        BALCOORD(optional)
+* | [--->] START_ROW                      TYPE        BALCOORD(optional)
+* | [--->] END_COL                        TYPE        BALCOORD(optional)
+* | [--->] END_ROW                        TYPE        BALCOORD(optional)
+* | [!CX!] CX_OO_MESSAGE
+* +--------------------------------------------------------------------------------------</SIGNATURE>
+  METHOD display_log_2.
+    DATA: tl_log_handle TYPE bal_t_logh.
+
+    DATA: wl_display_profile TYPE bal_s_prof.
+
+
+*    IF me->log_handle IS NOT INITIAL.
+*      APPEND me->log_handle_t TO tl_log_handle.
+*    ELSE.
+*      APPEND LINES OF me->log_handle_t TO tl_log_handle.
+*    ENDIF.
+
+    IF me->log_handle_t IS NOT INITIAL.
+      tl_log_handle = me->log_handle_t.
+    ELSE.
+      APPEND LINES OF me->log_handle_t TO tl_log_handle.
+    ENDIF.
+
+    IF me->estrutura_adicionais IS NOT INITIAL.
+      wl_display_profile = me->monta_fieldcatlog( ).
+    ENDIF.
+
+    wl_display_profile-title = titulo.
+
+    wl_display_profile-start_col = start_col.
+    wl_display_profile-start_row = start_row.
+    wl_display_profile-end_col   = end_col.
+    wl_display_profile-end_row   = end_row.
+
+
+    CALL FUNCTION 'BAL_DSP_LOG_DISPLAY'
+      EXPORTING
+        i_t_log_handle         = tl_log_handle
+        i_s_msg_filter         = me->message_filter
+        i_t_msg_context_filter = me->context_filter
+        i_s_display_profile    = wl_display_profile
+      EXCEPTIONS
+        profile_inconsistent   = 1
+        internal_error         = 2
+        no_data_available      = 3
+        no_authority           = 4
+        OTHERS                 = 5.
+
+    IF sy-subrc IS NOT INITIAL.
+      RAISE EXCEPTION TYPE cx_oo_message.
+    ENDIF.
+
+  ENDMETHOD.
+
+
+* <SIGNATURE>---------------------------------------------------------------------------------------+
+* | Instance Public Method ZCL_BAL_LOG->ELIMINA_LOG
+* +-------------------------------------------------------------------------------------------------+
+* | [--->] OBJECT                         TYPE        BALHDR-OBJECT
+* | [--->] SUBOBJECT                      TYPE        BALHDR-SUBOBJECT
+* | [<-()] BAPIRET                        TYPE        BAPIRET2
+* +--------------------------------------------------------------------------------------</SIGNATURE>
+  METHOD elimina_log.
+
+*DATA lt_hdr_del TYPE balhdr_t.
+
+    SELECT *
+      FROM balhdr
+    INTO TABLE @DATA(lt_hdr_del)
+    WHERE object    EQ @object
+      AND subobject EQ @subobject
+      AND aldate    LE @sy-datum.
+
+    IF sy-subrc EQ 0.
+
+      CALL FUNCTION 'BAL_DB_DELETE'
+        EXPORTING
+          i_t_logs_to_delete = lt_hdr_del
+          i_with_commit_work = 'X'
+        EXCEPTIONS
+          no_logs_specified  = 1
+          OTHERS             = 2.
+      IF sy-subrc NE 0.
+        bapiret-id = sy-msgid.
+        bapiret-type = sy-msgty.
+        bapiret-number = sy-msgno.
+        bapiret-message_v1 = sy-msgv1.
+        bapiret-message_v2 = sy-msgv2.
+        bapiret-message_v3 = sy-msgv3.
+        bapiret-message_v4 = sy-msgv4.
+      ENDIF.
+
+    ENDIF.
+  ENDMETHOD.
+
+
+* <SIGNATURE>---------------------------------------------------------------------------------------+
+* | Instance Public Method ZCL_BAL_LOG->GET_QTD_MSG
+* +-------------------------------------------------------------------------------------------------+
+* | [<-()] CONT                           TYPE        I
+* +--------------------------------------------------------------------------------------</SIGNATURE>
+  METHOD get_qtd_msg.
+    cont = me->cont.
+
+  ENDMETHOD.
+
+
+* <SIGNATURE>---------------------------------------------------------------------------------------+
+* | Instance Private Method ZCL_BAL_LOG->MONTA_FIELDCATLOG
+* +-------------------------------------------------------------------------------------------------+
+* | [<-()] DISPLAY_PROFILE                TYPE        BAL_S_PROF
+* +--------------------------------------------------------------------------------------</SIGNATURE>
+  METHOD monta_fieldcatlog.
+    DATA: tl_fieldcat TYPE slis_t_fieldcat_alv,
+          tl_bal_fcat TYPE bal_t_fcat.
+
+    DATA: wl_bal_fcat  TYPE bal_s_fcat.
+
+
+    CALL FUNCTION 'BAL_DSP_PROFILE_STANDARD_GET'
+      IMPORTING
+        e_s_display_profile = display_profile
+      EXCEPTIONS
+        OTHERS              = 0.
+
+    READ TABLE display_profile-mess_fcat ASSIGNING FIELD-SYMBOL(<fs_mess_fcat>) WITH KEY
+      ref_field = 'T_MSG'.
+
+    IF sy-subrc IS INITIAL.
+      <fs_mess_fcat>-col_pos = 99.
+    ENDIF.
+
+    display_profile-show_all   = abap_true.
+    display_profile-cwidth_opt = abap_true.
+
+    CALL FUNCTION 'REUSE_ALV_FIELDCATALOG_MERGE'
+      EXPORTING
+        i_internal_tabname     = me->estrutura_adicionais
+        i_structure_name       = me->estrutura_adicionais
+      CHANGING
+        ct_fieldcat            = tl_fieldcat
+      EXCEPTIONS
+        inconsistent_interface = 1
+        program_error          = 2
+        OTHERS                 = 3.
+
+    LOOP AT tl_fieldcat ASSIGNING FIELD-SYMBOL(<fs_fieldcat>).
+
+      wl_bal_fcat-ref_table  = <fs_fieldcat>-tabname.
+      wl_bal_fcat-ref_field  = <fs_fieldcat>-fieldname.
+      wl_bal_fcat-col_pos    = <fs_fieldcat>-col_pos.
+      wl_bal_fcat-coltext    = <fs_fieldcat>-seltext_m.
+      wl_bal_fcat-colddictxt = abap_true.
+      wl_bal_fcat-outputlen  = <fs_fieldcat>-ddic_outputlen.
+
+      APPEND wl_bal_fcat TO tl_bal_fcat.
+    ENDLOOP.
+
+    APPEND LINES OF tl_bal_fcat TO display_profile-mess_fcat.
+  ENDMETHOD.
+
+
+* <SIGNATURE>---------------------------------------------------------------------------------------+
+* | Instance Public Method ZCL_BAL_LOG->SALVAR
+* +-------------------------------------------------------------------------------------------------+
+* +--------------------------------------------------------------------------------------</SIGNATURE>
+  METHOD salvar.
+    DATA: tl_log_handle TYPE bal_t_logh.
+
+    APPEND me->log_handle TO tl_log_handle.
+
+    CALL FUNCTION 'BAL_DB_SAVE'
+      EXPORTING
+        i_t_log_handle   = tl_log_handle
+      EXCEPTIONS
+        log_not_found    = 1
+        save_not_allowed = 2
+        numbering_error  = 3
+        OTHERS           = 4.
+  ENDMETHOD.
+ENDCLASS.
