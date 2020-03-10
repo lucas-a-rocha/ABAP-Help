@@ -1081,95 +1081,42 @@ CLASS zcl_utilities IMPLEMENTATION.
 * | [<-()] RV_STRING                      TYPE        STRING
 * +--------------------------------------------------------------------------------------</SIGNATURE>
   METHOD remover_caracteres_especiais.
-*   " Baseada na função ES_REMOVE_SPECIAL_CHARACTER.
+*   " Baseada na função ES_REMOVE_SPECIAL_CHARACTER, que não foi utilizada pois transforma os caracteres em uppercase
+*   " e não realiza algumas substituições necessárias dos caracteres.
     DATA:
       vl_string            TYPE string,
       lv_allowed_char_m340 TYPE c LENGTH 75 VALUE ' &,-.0123456789:;ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz_/()"''', "#EC *
       lv_letras_numeros    TYPE c LENGTH 75 VALUE ' .,0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz', "#EC *
-      lv_replace_by_a      TYPE c LENGTH 6 VALUE 'ÄÀÂÃÁÅ',  "#EC *
       lv_replace_by_a_l    TYPE c LENGTH 6 VALUE 'äàâãáå',  "#EC *
-      lv_replace_by_e      TYPE c LENGTH 4 VALUE 'ËÈÊÉ',    "#EC *
       lv_replace_by_e_l    TYPE c LENGTH 4 VALUE 'ëèêé',    "#EC *
-      lv_replace_by_i      TYPE c LENGTH 4 VALUE 'ÏÌÎÍ',    "#EC *
       lv_replace_by_i_l    TYPE c LENGTH 4 VALUE 'ïìîí',    "#EC *
-      lv_replace_by_o      TYPE c LENGTH 6 VALUE 'ÖÒÔÕÓØ',  "#EC *
       lv_replace_by_o_l    TYPE c LENGTH 6 VALUE 'öòôõóø',  "#EC *
-      lv_replace_by_u      TYPE c LENGTH 4 VALUE 'ÜÙÛÚ',    "#EC *
       lv_replace_by_u_l    TYPE c LENGTH 4 VALUE 'üùûú',    "#EC *
-      lv_replace_by_c      TYPE c LENGTH 1 VALUE 'Ç',       "#EC *
       lv_replace_by_c_l    TYPE c LENGTH 1 VALUE 'ç',       "#EC *
-      lv_replace_by_n      TYPE c LENGTH 1 VALUE 'Ñ',       "#EC *
       lv_replace_by_n_l    TYPE c LENGTH 1 VALUE 'ñ',       "#EC *
-      lv_replace_by_z      TYPE c LENGTH 1 VALUE 'Ž',       "#EC *
       lv_replace_by_z_l    TYPE c LENGTH 1 VALUE 'ž'.       "#EC *
 
-*    ÁÁÀÀÅÅÄÄÆÆÇÇÉÉÈÈÊÊÍÍÌÌÎÎÑÑÓÓÒÒÔÔÖÖØØÚÚÙÙÜÜŽŽ
-
     vl_string = iv_string.
+*    vl_string = '123 *ÄÀÂÃÁÅäàâãáå #ËÈÊÉëèêé $ÏÌÎÍïìîí %ÖÒÔÕÓØöòôõóø &ÜÙÛÚüùûú =ÇçÑñŽž'.
 
-    IF vl_string CA lv_replace_by_a.
-      vl_string = replace( val = vl_string regex = |[{ lv_replace_by_a }]| with = 'A' occ = 0 ).
-    ENDIF.
+*   " Realiza a substituição dos caracteres com formatos diferentes, não aceitos pelo SIAFI.
+    vl_string = replace( val = vl_string regex = |[{ lv_replace_by_a_l }]| with = 'a' occ = 0 ).
+    vl_string = replace( val = vl_string regex = |[{ lv_replace_by_e_l }]| with = 'e' occ = 0 ).
+    vl_string = replace( val = vl_string regex = |[{ lv_replace_by_i_l }]| with = 'i' occ = 0 ).
+    vl_string = replace( val = vl_string regex = |[{ lv_replace_by_o_l }]| with = 'o' occ = 0 ).
+    vl_string = replace( val = vl_string regex = |[{ lv_replace_by_u_l }]| with = 'u' occ = 0 ).
+    vl_string = replace( val = vl_string regex = |[{ lv_replace_by_c_l }]| with = 'c' occ = 0 ).
+    vl_string = replace( val = vl_string regex = |[{ lv_replace_by_n_l }]| with = 'n' occ = 0 ).
+    vl_string = replace( val = vl_string regex = |[{ lv_replace_by_z_l }]| with = 'z' occ = 0 ).
 
-    IF vl_string CA lv_replace_by_a_l .
-      vl_string = replace( val = vl_string regex = |[{ lv_replace_by_a_l }]| with = 'a' occ = 0 ).
-    ENDIF.
-
-    IF vl_string CA lv_replace_by_e   .
-      vl_string = replace( val = vl_string regex = |[{ lv_replace_by_e }]| with = 'E' occ = 0 ).
-    ENDIF.
-
-    IF vl_string CA lv_replace_by_e_l .
-      vl_string = replace( val = vl_string regex = |[{ lv_replace_by_e_l }]| with = 'e' occ = 0 ).
-    ENDIF.
-
-    IF vl_string CA lv_replace_by_i   .
-      vl_string = replace( val = vl_string regex = |[{ lv_replace_by_i }]| with = 'I' occ = 0 ).
-    ENDIF.
-
-    IF vl_string CA lv_replace_by_i_l .
-      vl_string = replace( val = vl_string regex = |[{ lv_replace_by_i_l }]| with = 'i' occ = 0 ).
-    ENDIF.
-
-    IF vl_string CA lv_replace_by_o   .
-      vl_string = replace( val = vl_string regex = |[{ lv_replace_by_o }]| with = 'O' occ = 0 ).
-    ENDIF.
-
-    IF vl_string CA lv_replace_by_o_l .
-      vl_string = replace( val = vl_string regex = |[{ lv_replace_by_o_l }]| with = 'o' occ = 0 ).
-    ENDIF.
-
-    IF vl_string CA lv_replace_by_u   .
-      vl_string = replace( val = vl_string regex = |[{ lv_replace_by_u }]| with = 'U' occ = 0 ).
-    ENDIF.
-
-    IF vl_string CA lv_replace_by_u_l .
-      vl_string = replace( val = vl_string regex = |[{ lv_replace_by_u_l }]| with = 'u' occ = 0 ).
-    ENDIF.
-
-    IF vl_string CA lv_replace_by_c   .
-      vl_string = replace( val = vl_string regex = |[{ lv_replace_by_c }]| with = 'C' occ = 0 ).
-    ENDIF.
-
-    IF vl_string CA lv_replace_by_c_l .
-      vl_string = replace( val = vl_string regex = |[{ lv_replace_by_c_l }]| with = 'c' occ = 0 ).
-    ENDIF.
-
-    IF vl_string CA lv_replace_by_n   .
-      vl_string = replace( val = vl_string regex = |[{ lv_replace_by_n }]| with = 'N' occ = 0 ).
-    ENDIF.
-
-    IF vl_string CA lv_replace_by_n_l .
-      vl_string = replace( val = vl_string regex = |[{ lv_replace_by_n_l }]| with = 'n' occ = 0 ).
-    ENDIF.
-
-    IF vl_string CA lv_replace_by_z   .
-      vl_string = replace( val = vl_string regex = |[{ lv_replace_by_z }]| with = 'Z' occ = 0 ).
-    ENDIF.
-
-    IF vl_string CA lv_replace_by_z_l .
-      vl_string = replace( val = vl_string regex = |[{ lv_replace_by_z_l }]| with = 'z' occ = 0 ).
-    ENDIF.
+    vl_string = replace( val = vl_string regex = |[{ to_upper( lv_replace_by_a_l ) }]| with = 'A' occ = 0 ).
+    vl_string = replace( val = vl_string regex = |[{ to_upper( lv_replace_by_e_l ) }]| with = 'E' occ = 0 ).
+    vl_string = replace( val = vl_string regex = |[{ to_upper( lv_replace_by_i_l ) }]| with = 'I' occ = 0 ).
+    vl_string = replace( val = vl_string regex = |[{ to_upper( lv_replace_by_o_l ) }]| with = 'O' occ = 0 ).
+    vl_string = replace( val = vl_string regex = |[{ to_upper( lv_replace_by_u_l ) }]| with = 'U' occ = 0 ).
+    vl_string = replace( val = vl_string regex = |[{ to_upper( lv_replace_by_c_l ) }]| with = 'C' occ = 0 ).
+    vl_string = replace( val = vl_string regex = |[{ to_upper( lv_replace_by_n_l ) }]| with = 'N' occ = 0 ).
+    vl_string = replace( val = vl_string regex = |[{ to_upper( lv_replace_by_z_l ) }]| with = 'Z' occ = 0 ).
 
 *   " Tratamento para os demais caracteres.
     vl_string = replace( val = vl_string regex = |[^{ lv_allowed_char_m340 }]| with = ' ' occ = 0 ).
@@ -1180,6 +1127,80 @@ CLASS zcl_utilities IMPLEMENTATION.
     ENDIF.
 
     rv_string = vl_string.
+
+*    IF vl_string CA to_upper( lv_replace_by_a_l ).
+*      vl_string = replace( val = vl_string regex = |[{ to_upper( lv_replace_by_a_l ) }]| with = 'A' occ = 0 ).
+*    ENDIF.
+*
+*    IF vl_string CA lv_replace_by_a_l .
+*      vl_string = replace( val = vl_string regex = |[{ lv_replace_by_a_l }]| with = 'a' occ = 0 ).
+*    ENDIF.
+*
+*    IF vl_string CA to_upper( lv_replace_by_e_l )   .
+*      vl_string = replace( val = vl_string regex = |[{ to_upper( lv_replace_by_e_l ) }]| with = 'E' occ = 0 ).
+*    ENDIF.
+*
+*    IF vl_string CA lv_replace_by_e_l .
+*      vl_string = replace( val = vl_string regex = |[{ lv_replace_by_e_l }]| with = 'e' occ = 0 ).
+*    ENDIF.
+*
+*    IF vl_string CA to_upper( lv_replace_by_i_l )   .
+*      vl_string = replace( val = vl_string regex = |[{ to_upper( lv_replace_by_i_l ) }]| with = 'I' occ = 0 ).
+*    ENDIF.
+*
+*    IF vl_string CA lv_replace_by_i_l .
+*      vl_string = replace( val = vl_string regex = |[{ lv_replace_by_i_l }]| with = 'i' occ = 0 ).
+*    ENDIF.
+*
+*    IF vl_string CA to_upper( lv_replace_by_o_l )   .
+*      vl_string = replace( val = vl_string regex = |[{ to_upper( lv_replace_by_o_l ) }]| with = 'O' occ = 0 ).
+*    ENDIF.
+*
+*    IF vl_string CA lv_replace_by_o_l .
+*      vl_string = replace( val = vl_string regex = |[{ lv_replace_by_o_l }]| with = 'o' occ = 0 ).
+*    ENDIF.
+*
+*    IF vl_string CA to_upper( lv_replace_by_u_l )   .
+*      vl_string = replace( val = vl_string regex = |[{ to_upper( lv_replace_by_u_l ) }]| with = 'U' occ = 0 ).
+*    ENDIF.
+*
+*    IF vl_string CA lv_replace_by_u_l .
+*      vl_string = replace( val = vl_string regex = |[{ lv_replace_by_u_l }]| with = 'u' occ = 0 ).
+*    ENDIF.
+*
+*    IF vl_string CA to_upper( lv_replace_by_c_l )   .
+*      vl_string = replace( val = vl_string regex = |[{ to_upper( lv_replace_by_c_l ) }]| with = 'C' occ = 0 ).
+*    ENDIF.
+*
+*    IF vl_string CA lv_replace_by_c_l .
+*      vl_string = replace( val = vl_string regex = |[{ lv_replace_by_c_l }]| with = 'c' occ = 0 ).
+*    ENDIF.
+*
+*    IF vl_string CA to_upper( lv_replace_by_n_l ) .
+*      vl_string = replace( val = vl_string regex = |[{ to_upper( lv_replace_by_n_l ) }]| with = 'N' occ = 0 ).
+*    ENDIF.
+*
+*    IF vl_string CA lv_replace_by_n_l .
+*      vl_string = replace( val = vl_string regex = |[{ lv_replace_by_n_l }]| with = 'n' occ = 0 ).
+*    ENDIF.
+*
+*    IF vl_string CA to_upper( lv_replace_by_z_l )   .
+*      vl_string = replace( val = vl_string regex = |[{  to_upper( lv_replace_by_z_l ) }]| with = 'Z' occ = 0 ).
+*    ENDIF.
+*
+*    IF vl_string CA lv_replace_by_z_l .
+*      vl_string = replace( val = vl_string regex = |[{ lv_replace_by_z_l }]| with = 'z' occ = 0 ).
+*    ENDIF.
+*
+**   " Tratamento para os demais caracteres.
+*    vl_string = replace( val = vl_string regex = |[^{ lv_allowed_char_m340 }]| with = ' ' occ = 0 ).
+*
+**   " Remove os campos diferentes de letras e numeros.
+*    IF iv_letras_numeros EQ abap_true.
+*      vl_string = replace( val = vl_string regex = |[^{ lv_letras_numeros }]| with = ' ' occ = 0 ).
+*    ENDIF.
+*
+*    rv_string = vl_string.
   ENDMETHOD.
 
 
