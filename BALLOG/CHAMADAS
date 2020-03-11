@@ -1,0 +1,138 @@
+CONSTANTS cg_obj_ballog TYPE bal_s_log-object VALUE 'ZCARGAS' ##NO_TEXT.
+CONSTANTS cg_subobj_ballog TYPE bal_s_log-subobject VALUE 'ZAA_013' ##NO_TEXT.
+CONSTANTS cg_extnumber_ballog TYPE bal_s_log-extnumber VALUE 'Carga' ##NO_TEXT.
+CONSTANTS cg_estrutura_ballog TYPE string VALUE 'ZSAA_008' ##NO_TEXT.
+
+* <SIGNATURE>---------------------------------------------------------------------------------------+
+* | Instance Private Method ZCLAA_MIG_ATIVOS_IMOB->INICIAR_BAL_LOG
+* +-------------------------------------------------------------------------------------------------+
+* | [!CX!] CX_IDM_ERROR
+* +--------------------------------------------------------------------------------------</SIGNATURE>
+METHOD iniciar_bal_log.
+    DATA:
+      wl_log_struc       TYPE bal_s_log.
+
+    TRY .
+        me->og_log = NEW zcl_bal_log(
+          log_struc       = VALUE #(
+          extnumber       = me->cg_extnumber_ballog
+          object          = me->cg_obj_ballog
+          subobject       = me->cg_subobj_ballog
+          aldate          = me->vg_dt_log
+          altime          = me->vg_hr_log
+          aluser          = sy-uname
+          altcode         = sy-tcode
+          alprog          = sy-cprog
+          )
+          adicional_struc = me->cg_estrutura_ballog
+        ).
+
+      CATCH cx_oo_message.
+        RAISE EXCEPTION TYPE cx_idm_error
+          EXPORTING
+            message = VALUE #( type = 'E' id = zcl_utilities=>c_classe_mensagem number = 003 message_v1 = me->cg_obj_ballog message_v2 = me->cg_subobj_ballog ).
+    ENDTRY.
+  ENDMETHOD.
+  
+* <SIGNATURE>---------------------------------------------------------------------------------------+
+* | Instance Private Method ZCLAA_MIG_ATIVOS_IMOB->LOG_ADD_MSG
+* +-------------------------------------------------------------------------------------------------+
+* | [--->] IS_BAPIRET                     TYPE        BAPIRET2(optional)
+* | [--->] IT_BAPIRET                     TYPE        BAPIRET2_T(optional)
+* | [--->] IS_ZSAA_008                    TYPE        ZSAA_008(optional)
+* +--------------------------------------------------------------------------------------</SIGNATURE>
+  METHOD log_add_msg.
+    IF is_bapiret IS NOT INITIAL.
+      me->og_log->add_msg_bapiret( is_bapiret = is_bapiret dados_adicionais = is_zsaa_008 ). "dados_adicionais = sl_log_adicional ).
+    ENDIF.
+
+    IF it_bapiret[] IS NOT INITIAL.
+      me->og_log->add_msg_table( bapiret = it_bapiret dados_adicionais = is_zsaa_008 ). "dados_adicionais = sl_log_adicional ).
+    ENDIF.
+  ENDMETHOD.
+  
+* <SIGNATURE>---------------------------------------------------------------------------------------+
+* | Instance Private Method ZCLAA_MIG_ATIVOS_IMOB->FINALIZAR_EXECUCAO
+* +-------------------------------------------------------------------------------------------------+
+* | [!CX!] CX_IDM_ERROR
+* +--------------------------------------------------------------------------------------</SIGNATURE>
+  METHOD finalizar_execucao.
+    me->og_log->salvar( ).
+
+    IF me->tg_arquivo_export[] IS NOT INITIAL OR me->tg_arquivo_export_func[] IS NOT INITIAL.
+      me->criar_arquivo_export( ).
+    ENDIF.
+
+    IF sy-batch EQ abap_false.
+      TRY .
+        me->og_log->display_log( ).
+      CATCH cx_oo_message INTO DATA(ol_msg).
+      ENDTRY.
+    ENDIF.
+  ENDMETHOD.
+  
+* <SIGNATURE>---------------------------------------------------------------------------------------+
+* | Static Public Method ZCLAA_MIG_ATIVOS_IMOB=>VISUALIZAR_BAL_LOG_EXT
+* +-------------------------------------------------------------------------------------------------+
+* | [--->] IV_DT_INI                      TYPE        BAL_S_LOG-ALDATE
+* | [--->] IV_DT_FIM                      TYPE        BAL_S_LOG-ALDATE(optional)
+* | [--->] IV_HR_INI                      TYPE        BAL_S_LOG-ALTIME
+* | [--->] IV_HR_FIM                      TYPE        BAL_S_LOG-ALTIME(optional)
+* | [!CX!] CX_IDM_ERROR
+* +--------------------------------------------------------------------------------------</SIGNATURE>
+  METHOD visualizar_bal_log_ext.
+
+    DATA:
+      vl_dt_ini TYPE sy-datum,
+      vl_dt_fim TYPE sy-datum,
+      vl_hh_ini TYPE sy-uzeit,
+      vl_hh_fim TYPE sy-uzeit.
+
+    IF iv_dt_ini IS NOT INITIAL.
+      vl_dt_ini = iv_dt_ini.
+    ELSE.
+      vl_dt_ini = sy-datum.
+    ENDIF.
+
+    IF iv_dt_fim IS NOT INITIAL.
+      vl_dt_fim = iv_dt_fim.
+    ELSE.
+      vl_dt_fim = sy-datum.
+    ENDIF.
+
+    IF iv_hr_ini IS NOT INITIAL.
+      vl_hh_ini = iv_hr_ini.
+    ELSE.
+      vl_hh_ini = '000000'.
+    ENDIF.
+
+    IF iv_hr_fim IS NOT INITIAL.
+      vl_hh_fim = iv_hr_fim.
+    ELSE.
+      vl_hh_fim = '235959'.
+    ENDIF.
+
+    TRY .
+
+        DATA(ol_bal_log) = NEW zcl_bal_log( adicional_struc = cg_estrutura_ballog ).
+        ol_bal_log->criterio_pesquisa( i_object          = cg_obj_ballog
+                                       i_subobject       = cg_subobj_ballog
+                                       i_extnumber       = cg_extnumber_ballog
+                                       i_aldate_from     = vl_dt_ini
+                                       i_aldate_to       = vl_dt_fim
+                                       i_altime_from     = vl_hh_ini
+                                       i_altime_to       = vl_hh_fim ).
+
+        ol_bal_log->display_log( CONV string( 'Log de execução da Carga'(002) ) ).
+
+      CATCH cx_oo_message.
+        DATA wl_msg TYPE bapiret2.
+        wl_msg-type = 'E'.
+        wl_msg-id = zcl_utilities=>c_classe_mensagem.
+        wl_msg-number = 012.
+
+        RAISE EXCEPTION TYPE cx_idm_error
+          EXPORTING
+            message = wl_msg.
+    ENDTRY.
+  ENDMETHOD.
