@@ -1,0 +1,9 @@
+*     " Ajusta o LAYOUT de acordo com o selecionado.
+      DATA wl_key TYPE salv_s_layout_key.
+      DATA(ol_layout) = ol_salv_table->get_layout( ).
+      wl_key-report = sy-repid.
+
+      ol_layout->set_key( wl_key ).
+      ol_layout->set_initial_layout( me->vg_layout ).
+      ol_layout->set_save_restriction( if_salv_c_layout=>restrict_user_dependant ).
+      ol_layout->set_default( if_salv_c_bool_sap=>true ).
