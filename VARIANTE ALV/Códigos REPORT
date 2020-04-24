@@ -1,0 +1,49 @@
+PARAMETERS:  p_layout LIKE disvariant-variant. "LAYOUT
+
+**********************************************************************
+* INICIALIZAÇÃO
+**********************************************************************
+INITIALIZATION.
+  PERFORM get_default_layout CHANGING p_layout.
+
+**********************************************************************
+* AT SELECTION-SCREEN ON VALUE-REQUEST                               *
+**********************************************************************
+AT SELECTION-SCREEN ON VALUE-REQUEST FOR p_layout.
+  PERFORM f4_layouts CHANGING p_layout.
+
+*&---------------------------------------------------------------------*
+*&      Form  f4_layouts
+*&---------------------------------------------------------------------*
+FORM f4_layouts CHANGING c_layout TYPE disvariant-variant.
+
+  DATA: ls_layout TYPE salv_s_layout_info,
+        ls_key    TYPE salv_s_layout_key.
+
+  ls_key-report = sy-repid.
+
+  ls_layout = cl_salv_layout_service=>f4_layouts(
+    s_key    = ls_key
+    restrict = if_salv_c_layout=>restrict_user_dependant ).
+
+  c_layout = ls_layout-layout.
+
+ENDFORM.                    " f4_layouts
+
+*&---------------------------------------------------------------------*
+*&      Form  get_default_layout
+*&---------------------------------------------------------------------*
+FORM get_default_layout CHANGING c_layout TYPE disvariant-variant.
+
+  DATA: ls_layout TYPE salv_s_layout_info,
+        ls_key    TYPE salv_s_layout_key.
+
+  ls_key-report = sy-repid.
+
+  ls_layout = cl_salv_layout_service=>get_default_layout(
+    s_key    = ls_key
+    restrict = if_salv_c_layout=>restrict_user_dependant ).
+
+  c_layout = ls_layout-layout.
+
+ENDFORM.                    " get_default_layout
