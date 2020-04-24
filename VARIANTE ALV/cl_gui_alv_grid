@@ -1,0 +1,5 @@
+
+      is_variant                    = VALUE #( report    = sy-cprog
+                                               username  = sy-uname
+                                               variant   = p_vari )
+      i_save                        = 'A'
