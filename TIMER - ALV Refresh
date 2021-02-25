@@ -1,0 +1,77 @@
+*&---------------------------------------------------------------------*
+*& Report ZTIMER
+*&---------------------------------------------------------------------*
+*&
+*&---------------------------------------------------------------------*
+REPORT ztimer.
+
+*-----------------------------------------------*
+* CLASS lcl_receiver DEFINITION
+*-----------------------------------------------*
+*
+*-----------------------------------------------*
+CLASS lcl_receiver DEFINITION.
+  PUBLIC SECTION.
+    METHODS:
+      handle_finished FOR EVENT finished OF cl_gui_timer.
+ENDCLASS.
+
+DATA:
+  i_data   TYPE TABLE OF spfli,
+  o_grid   TYPE REF TO cl_gui_alv_grid,
+  receiver TYPE REF TO lcl_receiver,
+  timer    TYPE REF TO cl_gui_timer.
+
+CONSTANTS:
+  c_interval TYPE i VALUE 3. " Segundos.
+
+FIELD-SYMBOLS:
+  <fs_data> LIKE LINE OF i_data.
+
+SELECT * FROM spfli INTO TABLE i_data.
+CREATE OBJECT timer.
+
+CREATE OBJECT receiver.
+SET HANDLER receiver->handle_finished FOR timer.
+
+timer->interval = c_interval.
+CALL METHOD timer->run.
+
+CALL FUNCTION 'REUSE_ALV_GRID_DISPLAY_LVC'
+  EXPORTING
+    i_structure_name = 'SPFLI'
+  TABLES
+    t_outtab         = i_data.
+
+timer->cancel( ).
+
+*------------------------------------------------*
+* CLASS lcl_receiver IMPLEMENTATION
+*------------------------------------------------*
+*
+*------------------------------------------------*
+CLASS lcl_receiver IMPLEMENTATION.
+  METHOD handle_finished.
+    PERFORM refresh_view.
+    CALL METHOD timer->run.
+  ENDMETHOD.
+ENDCLASS.
+
+*&-----------------------------------------------*
+*& Form refresh_view
+*&-----------------------------------------------*
+* Refresh logic
+*------------------------------------------------*
+FORM refresh_view.
+** to simulate data updates
+*  LOOP AT i_data ASSIGNING <fs_data>.
+*    -period = -period + 1.
+*  ENDLOOP.
+  CALL FUNCTION 'GET_GLOBALS_FROM_SLVC_FULLSCR'
+    IMPORTING
+      e_grid = o_grid.
+
+  IF o_grid IS NOT INITIAL.
+    CALL METHOD o_grid->refresh_table_display.
+  ENDIF.
+ENDFORM.
