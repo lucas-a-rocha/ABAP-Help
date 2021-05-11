@@ -1,0 +1,74 @@
+DATA:
+    tl_joblogtbl     TYPE STANDARD TABLE OF tbtc5.
+
+  DATA:
+    wl_msg_bal_log   TYPE tp_bal_log.
+
+  DATA:
+    vl_nome_job_std  TYPE btcjob.
+
+  SELECT branch
+    FROM /tmf/d_sys_inf
+    INTO TABLE @DATA(tl_filial)
+   WHERE bukrs = @iv_bukrs.
+
+  LOOP AT tl_filial ASSIGNING FIELD-SYMBOL(<fl_filial>).
+    CLEAR tl_joblogtbl.
+
+    IF me->verificar_evento_periodico( iv_denevt = iv_denevt ) = abap_true.
+      <fl_filial> = ''.
+    ENDIF.
+
+    CONCATENATE 'REINF' iv_bukrs <fl_filial> iv_gjahr iv_dlymo iv_denevt
+           INTO vl_nome_job_std.
+
+    " busca número do job para recuperar as mensagens do output
+    SELECT MIN( cp~jobcount )
+      FROM tbtcp    as cp
+      INTO @DATA(vl_jobcount)
+     WHERE cp~sdluname = @sy-uname
+       AND cp~jobname  = @vl_nome_job_std
+       AND cp~sdldate  = @sy-datum
+       AND cp~sdltime >= ( SELECT MIN( cp2~sdltime )
+                             FROM tbtcp    as cp2
+                            WHERE cp2~sdluname = @sy-uname
+                              AND cp2~jobcount = @iv_jobcount
+                              AND cp2~jobname  = @iv_jobname ).
+
+    " busca as mensagens do output do job
+    CALL FUNCTION 'BP_JOBLOG_READ'
+     EXPORTING
+       client                      = sy-mandt
+       jobcount                    = vl_jobcount
+       jobname                     = vl_nome_job_std
+     TABLES
+       joblogtbl                   = tl_joblogtbl
+     EXCEPTIONS
+       cant_read_joblog            = 1
+       jobcount_missing            = 2
+       joblog_does_not_exist       = 3
+       joblog_is_empty             = 4
+       joblog_name_missing         = 5
+       jobname_missing             = 6
+       job_does_not_exist          = 7
+       others                      = 8 .
+    IF sy-subrc <> 0.
+      CONTINUE.
+    ENDIF.
+
+    LOOP AT tl_joblogtbl ASSIGNING FIELD-SYMBOL(<fl_joblogtbl>)
+                             WHERE msgid = '/TMF/APP_REINF'.
+      wl_msg_bal_log-msgty   = <fl_joblogtbl>-msgtype.
+      wl_msg_bal_log-msgid   = <fl_joblogtbl>-msgid.
+      wl_msg_bal_log-msgno   = <fl_joblogtbl>-msgno.
+      wl_msg_bal_log-msgv1   = <fl_joblogtbl>-msgv1.
+      wl_msg_bal_log-msgv2   = <fl_joblogtbl>-msgv2.
+      wl_msg_bal_log-msgv3   = <fl_joblogtbl>-msgv3.
+      wl_msg_bal_log-msgv4   = <fl_joblogtbl>-msgv4.
+      APPEND wl_msg_bal_log TO ct_msg_bal_log.
+    ENDLOOP.
+
+    IF me->verificar_evento_periodico( iv_denevt = iv_denevt ) = abap_true.
+      EXIT.
+    ENDIF.
+  ENDLOOP.
