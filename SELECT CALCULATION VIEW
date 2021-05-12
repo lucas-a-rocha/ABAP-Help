@@ -1,0 +1,21 @@
+    DATA(lt_nfs) = VALUE tt_nfs( ( ) ).
+
+*    data(where) = create_where( ).
+
+    DATA(lv_sql_command) =
+    | SELECT "MANDT", "NF_ID", "EMPRESA", "FILIAL" | &
+    | FROM "_SYS_BIC"."sap.glo.tmflocbr.ctr/PRV_NF_DOCUMENTO" |.
+
+    DATA(o_stmt) = NEW cl_sql_statement( ).
+    DATA(o_query) = o_stmt->execute_query( lv_sql_command ).
+
+    TRY.
+        o_query->set_param_table( itab_ref   = REF #( lt_nfs )
+                                 lob_fields = VALUE #( ( 'CREATE_STMT' ) ) ).
+        o_query->next_package( ).
+        o_query->close( ).
+
+      CATCH cx_sql_exception.
+      CATCH cx_parameter_invalid_type.
+
+    ENDTRY.
