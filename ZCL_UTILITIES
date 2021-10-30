@@ -10,9 +10,12 @@ CLASS zcl_utilities DEFINITION
     TYPES:
       tt_arquivo TYPE TABLE OF string .
     TYPES:
+      tt_string  TYPE TABLE OF string .
+    TYPES:
+      tt_xstring TYPE STANDARD TABLE OF x255 .
+    TYPES:
       tr_uname TYPE RANGE OF sy-uname .
 
-    CONSTANTS c_classe_mensagem TYPE bapiret2-id VALUE 'ZMIG' ##NO_TEXT.
     CONSTANTS c_origem_servidor TYPE char1 VALUE 'S' ##NO_TEXT.
     CONSTANTS c_origem_local TYPE char1 VALUE 'L' ##NO_TEXT.
 
@@ -33,9 +36,10 @@ CLASS zcl_utilities DEFINITION
         VALUE(rv_endereco) TYPE string .
     CLASS-METHODS arquivo_pc_itab
       IMPORTING
-        !iv_caminho TYPE string
+        !iv_caminho  TYPE string
+        !iv_codepage TYPE abap_encoding DEFAULT space
       EXPORTING
-        !et_arquivo TYPE tt_arquivo
+        !et_arquivo  TYPE tt_arquivo
       RAISING
         cx_idm_error .
     CLASS-METHODS arquivo_servidor_itab
@@ -84,12 +88,13 @@ CLASS zcl_utilities DEFINITION
         VALUE(ev_value) TYPE any .
     CLASS-METHODS transform_line_message
       IMPORTING
-        !iv_txt  TYPE any
+        !iv_txt      TYPE any
       EXPORTING
-        !ev_msg1 TYPE symsgv
-        !ev_msg2 TYPE symsgv
-        !ev_msg3 TYPE symsgv
-        !ev_msg4 TYPE symsgv .
+        !ev_msg1     TYPE symsgv
+        !ev_msg2     TYPE symsgv
+        !ev_msg3     TYPE symsgv
+        !ev_msg4     TYPE symsgv
+        !ev_msg_full TYPE string .
     CLASS-METHODS popup_message_from_tab
       IMPORTING
         !it_messages TYPE bapiret2_t .
@@ -154,7 +159,7 @@ CLASS zcl_utilities DEFINITION
     CLASS-METHODS dia_util_mes
       IMPORTING
         !iv_mes         TYPE ab_monat
-        !iv_ano         TYPE grpcrta_tfyear
+        !iv_ano         TYPE gjahr
         !iv_periodo_dia TYPE numc2
       EXPORTING
         !et_dias_uteis  TYPE tt_rke_dat
@@ -162,6 +167,12 @@ CLASS zcl_utilities DEFINITION
         VALUE(rv_data)  TYPE sy-datum
       RAISING
         cx_idm_error .
+    CLASS-METHODS generate_fieldcat
+      IMPORTING
+        !iv_complete   TYPE abap_bool OPTIONAL
+        !it_table      TYPE ANY TABLE
+      RETURNING
+        VALUE(rt_fcat) TYPE lvc_t_fcat .
   PROTECTED SECTION.
   PRIVATE SECTION.
 ENDCLASS.
@@ -169,1156 +180,6 @@ ENDCLASS.
 
 
 CLASS zcl_utilities IMPLEMENTATION.
-
-
-* <SIGNATURE>---------------------------------------------------------------------------------------+
-* | Static Public Method ZCL_UTILITIES=>ARQUIVO_ITAB_PC
-* +-------------------------------------------------------------------------------------------------+
-* | [--->] IV_CAMINHO                     TYPE        STRING
-* | [--->] IV_NOME                        TYPE        STRING
-* | [--->] IT_ARQUIVO                     TYPE        TT_ARQUIVO
-* | [!CX!] CX_IDM_ERROR
-* +--------------------------------------------------------------------------------------</SIGNATURE>
-  METHOD arquivo_itab_pc.
-    DATA:
-      vl_end_compl TYPE string,
-      tl_arquivo   TYPE zcl_utilities=>tt_arquivo.
-
-**********************************************************************
-*   " Verifica se o ultimo caractere do local de destino é '\'
-**********************************************************************
-    DATA(vl_tamanho) = strlen( iv_caminho ) - 1.
-    DATA(vl_ultimo_char) = iv_caminho+vl_tamanho(1).
-    IF vl_ultimo_char NE '\'.
-      DATA(vl_separador) = '\'.
-    ENDIF.
-
-    CONCATENATE iv_caminho vl_separador iv_nome INTO vl_end_compl.
-    tl_arquivo[] = it_arquivo[].
-
-    cl_gui_frontend_services=>gui_download( EXPORTING   filename              = vl_end_compl
-*                                                        write_field_separator = tabulado
-                                            CHANGING    data_tab              = tl_arquivo
-                                            EXCEPTIONS  OTHERS                = 1 ).
-
-    CHECK sy-subrc IS NOT INITIAL.
-
-    DATA: wl_msg TYPE bapiret2.
-    "MSG: Erro na Gravação do Arquivo
-    wl_msg-id = zcl_utilities=>c_classe_mensagem.
-    wl_msg-number = 002.
-
-    RAISE EXCEPTION TYPE cx_idm_error
-      EXPORTING
-        message = wl_msg.
-  ENDMETHOD.
-
-
-* <SIGNATURE>---------------------------------------------------------------------------------------+
-* | Static Public Method ZCL_UTILITIES=>ARQUIVO_ITAB_SERVIDOR
-* +-------------------------------------------------------------------------------------------------+
-* | [--->] IV_CAMINHO                     TYPE        STRING
-* | [--->] IV_NOME                        TYPE        STRING
-* | [--->] IT_ARQUIVO                     TYPE        TT_ARQUIVO
-* | [!CX!] CX_IDM_ERROR
-* +--------------------------------------------------------------------------------------</SIGNATURE>
-  METHOD arquivo_itab_servidor.
-
-    DATA: vl_endereco TYPE dirname_al11.
-
-**********************************************************************
-*   " Verifica se o ultimo caractere do local de destino é '/'
-**********************************************************************
-    DATA(vl_tamanho) = strlen( iv_caminho ) - 1.
-    DATA(vl_ultimo_char) = iv_caminho+vl_tamanho(1).
-    IF vl_ultimo_char NE '/'.
-      DATA(vl_separador) = '/'.
-    ENDIF.
-
-    CONCATENATE iv_caminho vl_separador iv_nome INTO vl_endereco.
-
-    "Cria o documento do servidor
-    OPEN DATASET vl_endereco FOR OUTPUT IN TEXT MODE ENCODING DEFAULT.
-
-    IF sy-subrc IS NOT INITIAL.
-
-      DATA: wl_msg TYPE bapiret2.
-      "MSG: Erro na Gravação do Arquivo
-      wl_msg-id = zcl_utilities=>c_classe_mensagem.
-      wl_msg-type = 'E'.
-      wl_msg-number = 002.
-
-      RAISE EXCEPTION TYPE cx_idm_error
-        EXPORTING
-          message = wl_msg.
-
-    ENDIF.
-
-    LOOP AT it_arquivo ASSIGNING FIELD-SYMBOL(<fs_arquivo>).
-      TRANSFER <fs_arquivo> TO vl_endereco.
-    ENDLOOP.
-
-    "Fecha arquivo
-    CLOSE DATASET vl_endereco.
-  ENDMETHOD.
-
-
-* <SIGNATURE>---------------------------------------------------------------------------------------+
-* | Static Public Method ZCL_UTILITIES=>ARQUIVO_PC_ITAB
-* +-------------------------------------------------------------------------------------------------+
-* | [--->] IV_CAMINHO                     TYPE        STRING
-* | [<---] ET_ARQUIVO                     TYPE        TT_ARQUIVO
-* | [!CX!] CX_IDM_ERROR
-* +--------------------------------------------------------------------------------------</SIGNATURE>
-  METHOD arquivo_pc_itab.
-
-    IF iv_caminho IS NOT INITIAL.
-      cl_gui_frontend_services=>gui_upload(
-        EXPORTING
-          filename                = iv_caminho
-        CHANGING
-          data_tab                = et_arquivo
-        EXCEPTIONS
-          file_open_error         = 1
-          file_read_error         = 2
-          no_batch                = 3
-          gui_refuse_filetransfer = 4
-          invalid_type            = 5
-          no_authority            = 6
-          unknown_error           = 7
-          bad_data_format         = 8
-          header_not_allowed      = 9
-          separator_not_allowed   = 10
-          header_too_long         = 11
-          unknown_dp_error        = 12
-          access_denied           = 13
-          dp_out_of_memory        = 14
-          disk_full               = 15
-          dp_timeout              = 16
-          not_supported_by_gui    = 17
-          error_no_gui            = 18 ).
-
-      CHECK sy-subrc IS NOT INITIAL.
-
-      DATA: wl_msg TYPE bapiret2.
-      "MSG: Erro na Gravação do Arquivo
-      wl_msg-id = zcl_utilities=>c_classe_mensagem.
-      wl_msg-number = 001.
-
-      RAISE EXCEPTION TYPE cx_idm_error
-        EXPORTING
-          message = wl_msg.
-    ENDIF.
-  ENDMETHOD.
-
-
-* <SIGNATURE>---------------------------------------------------------------------------------------+
-* | Static Public Method ZCL_UTILITIES=>ARQUIVO_SERVIDOR_ITAB
-* +-------------------------------------------------------------------------------------------------+
-* | [--->] IV_CAMINHO                     TYPE        STRING
-* | [<---] ET_ARQUIVO                     TYPE        TT_ARQUIVO
-* | [!CX!] CX_IDM_ERROR
-* +--------------------------------------------------------------------------------------</SIGNATURE>
-  METHOD arquivo_servidor_itab.
-    DATA: vl_endereco TYPE dirname_al11,
-          vl_linha    TYPE string.
-
-    vl_endereco = iv_caminho.
-
-    "Abre o documento do servidor
-    OPEN DATASET vl_endereco FOR INPUT IN TEXT MODE ENCODING NON-UNICODE
-                                                    IGNORING CONVERSION ERRORS.
-
-    IF sy-subrc IS NOT INITIAL.
-
-      DATA: wl_msg TYPE bapiret2.
-      "MSG: Erro na Gravação do Arquivo
-      wl_msg-id = zcl_utilities=>c_classe_mensagem.
-      wl_msg-number = 001.
-
-      RAISE EXCEPTION TYPE cx_idm_error
-        EXPORTING
-          message = wl_msg.
-
-    ENDIF.
-
-    DO.
-
-      "Le arquivo linha a linha
-      READ DATASET vl_endereco INTO vl_linha.
-
-      IF sy-subrc IS NOT INITIAL.
-        EXIT.
-      ENDIF.
-
-      APPEND vl_linha TO et_arquivo.
-
-    ENDDO.
-
-    "Fecha arquivo
-    CLOSE DATASET vl_endereco.
-  ENDMETHOD.
-
-
-* <SIGNATURE>---------------------------------------------------------------------------------------+
-* | Static Public Method ZCL_UTILITIES=>BUSCAR_DIRETORIO_LOCAL
-* +-------------------------------------------------------------------------------------------------+
-* | [<-()] RV_ENDERECO                    TYPE        STRING
-* +--------------------------------------------------------------------------------------</SIGNATURE>
-  METHOD buscar_diretorio_local.
-    cl_gui_frontend_services=>directory_browse( CHANGING selected_folder = rv_endereco ).
-  ENDMETHOD.
-
-
-* <SIGNATURE>---------------------------------------------------------------------------------------+
-* | Static Public Method ZCL_UTILITIES=>BUSCAR_DIRETORIO_SERVIDOR
-* +-------------------------------------------------------------------------------------------------+
-* | [<-()] RV_ENDERECO                    TYPE        STRING
-* +--------------------------------------------------------------------------------------</SIGNATURE>
-  METHOD buscar_diretorio_servidor.
-    CALL FUNCTION '/SAPDMC/LSM_F4_SERVER_FILE'
-      EXPORTING
-        directory        = '/usr/sap/'
-        filemask         = ''
-      IMPORTING
-        serverfile       = rv_endereco
-      EXCEPTIONS
-        canceled_by_user = 1
-        OTHERS           = 2.
-
-  ENDMETHOD.
-
-
-* <SIGNATURE>---------------------------------------------------------------------------------------+
-* | Static Public Method ZCL_UTILITIES=>CHECK_PRODUCTIVE_SYSTEM
-* +-------------------------------------------------------------------------------------------------+
-* | [<-()] RV_PROD                        TYPE        FLAG
-* +--------------------------------------------------------------------------------------</SIGNATURE>
-  METHOD check_productive_system.
-    DATA: lv_role TYPE t000-cccategory.
-    CALL FUNCTION 'TR_SYS_PARAMS'
-      IMPORTING
-        system_client_role = lv_role
-      EXCEPTIONS
-        no_systemname      = 1
-        no_systemtype      = 2
-        OTHERS             = 3.
-    IF sy-subrc EQ 0.
-      CHECK lv_role = 'P'.
-      rv_prod = abap_true.
-    ENDIF.
-  ENDMETHOD.
-
-
-* <SIGNATURE>---------------------------------------------------------------------------------------+
-* | Static Public Method ZCL_UTILITIES=>CONVERTER_MOEDA
-* +-------------------------------------------------------------------------------------------------+
-* | [--->] IV_FCURR                       TYPE        TCURR-FCURR
-* | [--->] IV_TCURR                       TYPE        TCURR-TCURR
-* | [--->] IV_GDATU                       TYPE        SY-DATUM
-* | [<-()] RV_UKURS                       TYPE        TCURR-UKURS
-* | [!CX!] CX_IDM_ERROR
-* +--------------------------------------------------------------------------------------</SIGNATURE>
-  METHOD converter_moeda.
-    DATA:
-      vl_dt_10   TYPE char10,
-      vl_a_gdatu TYPE tcurr-gdatu.
-
-    vl_dt_10 = |{ iv_gdatu DATE = USER }|.
-
-    CALL FUNCTION 'CONVERSION_EXIT_INVDT_INPUT'
-      EXPORTING
-        input  = vl_dt_10
-      IMPORTING
-        output = vl_a_gdatu.
-
-    SELECT SINGLE ukurs
-      FROM tcurr
-      WHERE fcurr EQ @iv_fcurr
-        AND tcurr EQ @iv_tcurr
-        AND gdatu EQ @vl_a_gdatu
-    INTO @rv_ukurs .
-
-    IF rv_ukurs IS INITIAL.
-      DATA:
-        vl_b_dtin  TYPE sy-datum,
-        vl_b_gdatu TYPE tcurr-gdatu.
-
-      vl_b_dtin = iv_gdatu - 30.
-      vl_dt_10 = |{ vl_b_dtin DATE = USER }|.
-
-      CALL FUNCTION 'CONVERSION_EXIT_INVDT_INPUT'
-        EXPORTING
-          input  = vl_dt_10
-        IMPORTING
-          output = vl_b_gdatu.
-
-      SELECT ukurs, gdatu
-        FROM tcurr
-        WHERE fcurr EQ @iv_fcurr
-          AND tcurr EQ @iv_tcurr
-          AND gdatu GT @vl_a_gdatu " DATA MAIOR - ESSE PARAMETRO É INVERTIDO
-          AND gdatu LT @vl_b_gdatu " DATA MENOR - ESSE PARAMETRO É INVERTIDO
-      INTO TABLE @DATA(tl_tcur).
-
-      SORT tl_tcur BY gdatu ASCENDING. " A ordenação é o inverso do padrão. Pega a maior data.
-      IF tl_tcur[] IS NOT INITIAL.
-        rv_ukurs = tl_tcur[ 1 ]-ukurs.
-      ENDIF.
-    ENDIF.
-
-    IF rv_ukurs IS INITIAL.
-      IF 1 = 2. MESSAGE s005(zfi). ENDIF. " Nenhuma conversão de moeda foi encontrada no período.
-      RAISE EXCEPTION TYPE cx_idm_error
-        EXPORTING
-          message = VALUE #(
-            id = 'ZFI'
-            number = 005
-            type = 'E'
-            message_v1 = iv_fcurr
-            message_v2 = iv_tcurr
-            message_v3 = |{ iv_gdatu DATE = USER }|
-          ).
-
-    ENDIF.
-  ENDMETHOD.
-
-
-* <SIGNATURE>---------------------------------------------------------------------------------------+
-* | Static Public Method ZCL_UTILITIES=>DIA_UTIL_MES
-* +-------------------------------------------------------------------------------------------------+
-* | [--->] IV_MES                         TYPE        AB_MONAT
-* | [--->] IV_ANO                         TYPE        GRPCRTA_TFYEAR
-* | [--->] IV_PERIODO_DIA                 TYPE        NUMC2
-* | [<---] ET_DIAS_UTEIS                  TYPE        TT_RKE_DAT
-* | [<-()] RV_DATA                        TYPE        SY-DATUM
-* | [!CX!] CX_IDM_ERROR
-* +--------------------------------------------------------------------------------------</SIGNATURE>
-  METHOD dia_util_mes.
-    DATA:
-      vl_data_ini TYPE sy-datum,
-      vl_data_fim TYPE sy-datum.
-
-    vl_data_ini = |{ iv_ano }{ iv_mes }01|.
-    CALL FUNCTION 'RP_LAST_DAY_OF_MONTHS'
-      EXPORTING
-        day_in            = vl_data_ini
-      IMPORTING
-        last_day_of_month = vl_data_fim
-      EXCEPTIONS
-        day_in_no_date    = 1
-        OTHERS            = 2.
-    IF sy-subrc <> 0.
-      RAISE EXCEPTION TYPE cx_idm_error
-        EXPORTING
-          message = VALUE #(
-              id          = sy-msgid
-              number      = sy-msgno
-              type        = sy-msgty
-              message_v1  = sy-msgv1
-              message_v2  = sy-msgv2
-              message_v3  = sy-msgv3
-              message_v4  = sy-msgv4
-          ).
-    ENDIF.
-
-*   " Encontra todos os dias úteis do mês.
-    CALL FUNCTION 'RKE_SELECT_FACTDAYS_FOR_PERIOD'
-      EXPORTING
-        i_datab               = vl_data_ini
-        i_datbi               = vl_data_fim
-        i_factid              = 'BR'
-      TABLES
-        eth_dats              = et_dias_uteis
-      EXCEPTIONS
-        date_conversion_error = 1
-        OTHERS                = 2.
-    IF sy-subrc <> 0.
-      RAISE EXCEPTION TYPE cx_idm_error
-        EXPORTING
-          message = VALUE #(
-              id          = sy-msgid
-              number      = sy-msgno
-              type        = sy-msgty
-              message_v1  = sy-msgv1
-              message_v2  = sy-msgv2
-              message_v3  = sy-msgv3
-              message_v4  = sy-msgv4
-          ).
-    ENDIF.
-
-    IF et_dias_uteis[] IS NOT INITIAL.
-      READ TABLE et_dias_uteis INDEX iv_periodo_dia INTO DATA(wl_rke_dat).
-      rv_data = wl_rke_dat-periodat.
-    ENDIF.
-  ENDMETHOD.
-
-
-* <SIGNATURE>---------------------------------------------------------------------------------------+
-* | Static Public Method ZCL_UTILITIES=>ENVIAR_EMAIL
-* +-------------------------------------------------------------------------------------------------+
-* | [--->] IV_REMETENTE_UNAME             TYPE        SY-UNAME(optional)
-* | [--->] IV_REMETENTE                   TYPE        ADR6-SMTP_ADDR(optional)
-* | [--->] IV_ASSUNTO                     TYPE        SO_OBJ_DES
-* | [--->] IT_CONTEUDO                    TYPE        BCSY_TEXT
-* | [--->] IT_DESTINATARIOS               TYPE        BCSY_SMTPA(optional)
-* | [--->] IT_DESTINATARIOS_CC            TYPE        BCSY_SMTPA(optional)
-* | [--->] IR_UNAME_DESTINATARIOS         TYPE        TR_UNAME(optional)
-* | [--->] IR_UNAME_COPIA                 TYPE        TR_UNAME(optional)
-* | [--->] IV_COMMIT                      TYPE        BOOLEAN(optional)
-* | [--->] IV_TIPO                        TYPE        ANY(optional)
-* | [!CX!] CX_IDM_ERROR
-* +--------------------------------------------------------------------------------------</SIGNATURE>
-  METHOD enviar_email.
-    DATA:
-      ol_email           TYPE REF TO cl_bcs,
-      ol_corpo_email     TYPE REF TO cl_document_bcs,
-      ol_remetente       TYPE REF TO cl_cam_address_bcs,
-      ol_remetente_u     TYPE REF TO cl_sapuser_bcs,
-      ol_destinatario    TYPE REF TO cl_cam_address_bcs,
-      ol_reply_dest      TYPE REF TO cl_cam_address_bcs,
-      ol_destinatario_u  TYPE REF TO cl_sapuser_bcs,
-      ol_reply_u         TYPE REF TO cl_sapuser_bcs,
-      ol_cx_bcs          TYPE REF TO cx_bcs,
-      ol_cx_send_req_bcs TYPE REF TO cx_send_req_bcs.
-
-    DATA wl_message      TYPE bapiret2.
-
-    DATA: vl_email_enviado TYPE os_boolean,
-          vl_tipo          TYPE so_obj_tp.
-
-    vl_tipo = iv_tipo.
-    IF vl_tipo IS INITIAL.
-      vl_tipo = 'RAW'.
-    ENDIF.
-
-    TRY.
-*       " Cria o e-mail
-        ol_email = cl_bcs=>create_persistent( ).
-
-*       " Cria o corpo do e-mail
-        ol_corpo_email = cl_document_bcs=>create_document(
-                        i_type    = vl_tipo
-                        i_text    = it_conteudo
-                        i_subject = iv_assunto ).
-
-*       " Vincula o corpo do e-mail ao e-mail.
-        ol_email->set_document( ol_corpo_email ).
-
-*       " Determina o remetente do e-mail.
-        IF iv_remetente IS NOT INITIAL.
-          ol_remetente = cl_cam_address_bcs=>create_internet_address( iv_remetente ).
-          ol_email->set_sender( i_sender = ol_remetente ).
-        ELSE.
-          DATA vl_uname TYPE sy-uname.
-          IF iv_remetente_uname IS NOT INITIAL.
-            vl_uname = iv_remetente_uname.
-          ELSE.
-            vl_uname = sy-uname.
-          ENDIF.
-
-          ol_remetente_u = cl_sapuser_bcs=>create( vl_uname ).
-          ol_email->set_sender( i_sender = ol_remetente_u ).
-        ENDIF.
-
-**********************************************************************
-*       " Gera destinatários de email através do endereço de email
-**********************************************************************
-        LOOP AT it_destinatarios INTO DATA(wl_destinatarios).
-          FREE: ol_destinatario.
-
-          IF wl_destinatarios IS NOT INITIAL.
-            ol_destinatario = cl_cam_address_bcs=>create_internet_address( wl_destinatarios ).
-            ol_email->add_recipient(
-              EXPORTING
-                i_recipient = ol_destinatario
-                i_express   = 'X' ) .
-          ENDIF.
-        ENDLOOP.
-
-**********************************************************************
-*       " Gera emails em cópia pelo endereço de email
-**********************************************************************
-        LOOP AT it_destinatarios_cc INTO DATA(wl_destinatarios_cc).
-          FREE: ol_reply_dest.
-
-          IF wl_destinatarios_cc IS NOT INITIAL.
-            ol_reply_dest = cl_cam_address_bcs=>create_internet_address( wl_destinatarios_cc ).
-
-            ol_email->set_reply_to( i_reply_to = ol_reply_dest ).
-          ENDIF.
-        ENDLOOP.
-
-**********************************************************************
-*       " Gera destinatários de email através do SY-UNAME.
-**********************************************************************
-        LOOP AT ir_uname_destinatarios INTO DATA(wl_uname_destinatarios).
-          FREE: ol_destinatario_u.
-
-          IF wl_uname_destinatarios-low IS NOT INITIAL.
-            ol_destinatario_u = cl_sapuser_bcs=>create( wl_uname_destinatarios-low ).
-
-            ol_email->add_recipient(
-              EXPORTING
-                i_recipient = ol_destinatario_u
-                i_express   = 'X' ).
-          ENDIF.
-        ENDLOOP.
-
-**********************************************************************
-*       " Gera emails em cópia pelo SY_UNAME
-**********************************************************************
-        LOOP AT ir_uname_copia INTO DATA(wl_copia_para).
-          FREE: ol_reply_u.
-
-          IF wl_copia_para-low IS NOT INITIAL.
-            ol_reply_u = cl_sapuser_bcs=>create( wl_copia_para-low ).
-
-            ol_email->set_reply_to( i_reply_to = ol_reply_u ).
-          ENDIF.
-        ENDLOOP.
-
-*       " Realiza o envio do e-mail
-        vl_email_enviado = ol_email->send( ).
-
-*       " Em caso de sucesso, conclui o envio - Deve ser executado fora do método.
-        IF NOT iv_commit IS INITIAL.
-          COMMIT WORK.
-        ENDIF.
-
-      CATCH cx_bcs INTO ol_cx_bcs.
-        wl_message-id         = ol_cx_bcs->msgid.
-        wl_message-type       = ol_cx_bcs->msgty.
-        wl_message-number     = ol_cx_bcs->msgno.
-        wl_message-message_v1 = ol_cx_bcs->msgv1.
-        wl_message-message_v2 = ol_cx_bcs->msgv2.
-        wl_message-message_v3 = ol_cx_bcs->msgv3.
-        wl_message-message_v4 = ol_cx_bcs->msgv4.
-        RAISE EXCEPTION TYPE cx_idm_error EXPORTING message = wl_message.
-*      CATCH cx_send_req_bcs INTO ol_cx_send_req_bcs.
-    ENDTRY.
-  ENDMETHOD.
-
-
-* <SIGNATURE>---------------------------------------------------------------------------------------+
-* | Static Public Method ZCL_UTILITIES=>ERROR_PROXY
-* +-------------------------------------------------------------------------------------------------+
-* | [--->] IO_SYSFAULT                    TYPE REF TO CX_AI_SYSTEM_FAULT(optional)
-* | [--->] IO_APPFAULT                    TYPE REF TO CX_AI_APPLICATION_FAULT(optional)
-* | [--->] IV_NUMBER                      TYPE        ANY
-* | [--->] IV_CLSMSG                      TYPE        ANY
-* | [<-->] CT_MENSAGENS                   TYPE        BAL_T_MSG
-* | [<-()] RV_ERROR                       TYPE        FLAG
-* +--------------------------------------------------------------------------------------</SIGNATURE>
-  METHOD error_proxy.
-    DATA: vl_txt  TYPE c LENGTH 5000,
-          vl_msg1 TYPE symsgv,
-          vl_msg2 TYPE symsgv,
-          vl_msg3 TYPE symsgv,
-          vl_msg4 TYPE symsgv,
-          vl_aux  TYPE string.
-    CLEAR: vl_txt, vl_aux, vl_msg1, vl_msg2, vl_msg3, vl_msg4.
-    rv_error = abap_true.
-    IF io_sysfault IS BOUND.
-      vl_txt = io_sysfault->get_text( ).
-    ENDIF.
-    IF io_appfault IS BOUND.
-      vl_txt = io_appfault->get_text( ).
-    ENDIF.
-
-    zcl_utilities=>transform_line_message( EXPORTING iv_txt  = vl_txt
-                                           IMPORTING ev_msg1 = vl_msg1
-                                                     ev_msg2 = vl_msg2
-                                                     ev_msg3 = vl_msg3
-                                                     ev_msg4 = vl_msg4 ).
-
-    APPEND INITIAL LINE TO ct_mensagens ASSIGNING FIELD-SYMBOL(<msg>).
-    IF <msg> IS ASSIGNED.
-      "Alimenta os campos da mensagem
-      <msg>-msgty     = 'E'.
-      <msg>-msgid     = iv_clsmsg.
-      <msg>-msgno     = iv_number.
-      <msg>-msgv1     = vl_msg1.
-      <msg>-msgv2     = vl_msg2.
-      <msg>-msgv3     = vl_msg3.
-      <msg>-msgv4     = vl_msg4.
-    ENDIF.
-  ENDMETHOD.
-
-
-* <SIGNATURE>---------------------------------------------------------------------------------------+
-* | Static Public Method ZCL_UTILITIES=>GERAR_DIRETORIO_TEMP
-* +-------------------------------------------------------------------------------------------------+
-* | [<-()] RV_DIRETORIO                   TYPE        STRING
-* +--------------------------------------------------------------------------------------</SIGNATURE>
-  METHOD gerar_diretorio_temp.
-    DATA var1 TYPE string.
-
-    CALL METHOD cl_gui_frontend_services=>get_user_name
-      CHANGING
-        user_name    = var1
-      EXCEPTIONS
-        cntl_error   = 1
-        error_no_gui = 2
-        OTHERS       = 3.
-
-    IF sy-subrc <> 0.
-*     MESSAGE ID sy-msgid TYPE sy-msgty NUMBER sy-msgno
-*       WITH sy-msgv1 sy-msgv2 sy-msgv3 sy-msgv4.
-    ENDIF.
-
-    CALL METHOD cl_gui_cfw=>update_view
-      EXCEPTIONS
-        cntl_system_error = 1
-        cntl_error        = 2
-        OTHERS            = 3.
-
-    IF var1 IS INITIAL.
-      rv_diretorio = 'C:\temp\'.
-    ELSE.
-      CONCATENATE 'C:\Users\' var1 '\Downloads\temp' INTO rv_diretorio.
-    ENDIF.
-  ENDMETHOD.
-
-
-* <SIGNATURE>---------------------------------------------------------------------------------------+
-* | Static Public Method ZCL_UTILITIES=>LER_XLSX_APP_SERVER
-* +-------------------------------------------------------------------------------------------------+
-* | [--->] IV_SERVIDOR                    TYPE        STRING
-* | [<---] ET_TABLE                       TYPE        ANY TABLE
-* +--------------------------------------------------------------------------------------</SIGNATURE>
-  METHOD ler_xlsx_app_server.
-    DATA:
-      l_len        TYPE sy-tabix,
-      vl_file_size TYPE i,
-      tl_binario   TYPE solix_tab, "STANDARD TABLE OF x255,
-      wl_binario   LIKE LINE OF tl_binario,
-      vl_xstring   TYPE xstring.
-*************************************************************************************
-*	  " Lê o arquivo e o armazena em uma tabela binária.
-*************************************************************************************
-    OPEN DATASET iv_servidor FOR INPUT IN BINARY MODE.
-    DO.
-      CLEAR l_len.
-      READ DATASET iv_servidor INTO wl_binario LENGTH l_len.
-      IF sy-subrc <> 0.
-        IF l_len > 0.
-          vl_file_size = vl_file_size + l_len.
-          APPEND wl_binario TO tl_binario.
-        ENDIF.
-        EXIT.
-      ENDIF.
-      vl_file_size = vl_file_size + l_len.
-      APPEND wl_binario TO tl_binario.
-    ENDDO.
-
-*************************************************************************************
-*	  " Converte os dados do arquivo XLSX de BINÁRIO para XSTRING.
-*************************************************************************************
-    CALL FUNCTION 'SCMS_BINARY_TO_XSTRING'
-      EXPORTING
-        input_length = vl_file_size
-      IMPORTING
-        buffer       = vl_xstring
-      TABLES
-        binary_tab   = tl_binario
-      EXCEPTIONS
-        failed       = 1.
-
-*************************************************************************************
-*	  " Realiza a leitura do arquivo em XLSX e o adapta ao SAP.
-*************************************************************************************
-    TRY .
-        DATA(lo_xlsx_doc)       = cl_xlsx_document=>load_document( iv_data =  vl_xstring ).
-        DATA(lo_workbookpart)   = lo_xlsx_doc->get_workbookpart( ).
-        DATA(lo_wordsheetparts) = lo_workbookpart->get_worksheetparts( ).
-        DATA(lo_wordsheetpart)  = lo_wordsheetparts->get_part( 0 ).
-        DATA(vl_sheet_content)  = lo_wordsheetpart->get_data( ).
-      CATCH cx_openxml_not_found INTO DATA(ol_openxml_not_found).
-        RETURN.
-      CATCH cx_openxml_format INTO DATA(ol_openxml_format).
-        RETURN.
-    ENDTRY.
-
-
-*************************************************************************************
-*	  " Converte o arquivo XLSX adaptado de XSTRING para BINÁRIO.
-*************************************************************************************
-    DATA: gt_bintab TYPE solix_tab.
-    DATA: vl_output_length TYPE i.
-    CALL FUNCTION 'SCMS_XSTRING_TO_BINARY'
-      EXPORTING
-        buffer        = vl_sheet_content
-      IMPORTING
-        output_length = vl_output_length
-      TABLES
-        binary_tab    = gt_bintab.
-
-    DATA vl_text_buffer TYPE string.
-    CALL FUNCTION 'SCMS_BINARY_TO_STRING'
-      EXPORTING
-        input_length = vl_output_length
-*       FIRST_LINE   = 0
-*       LAST_LINE    = 0
-*       MIMETYPE     = ' '
-*       ENCODING     =
-      IMPORTING
-        text_buffer  = vl_text_buffer
-*       output_length = vl_output_length
-      TABLES
-        binary_tab   = gt_bintab
-* EXCEPTIONS
-*       FAILED       = 1
-*       OTHERS       = 2
-      .
-    IF sy-subrc <> 0.
-* Implement suitable error handling here
-    ENDIF.
-
-*************************************************************************************
-*	  " Converte o XLSX Binário em XML.
-*************************************************************************************
-    DATA tl_xml_table TYPE STANDARD TABLE OF smum_xmltb.
-    DATA tl_bapiret TYPE bapiret2_t.
-    CALL FUNCTION 'SMUM_XML_PARSE'
-      EXPORTING
-        xml_input = vl_sheet_content
-      TABLES
-        xml_table = tl_xml_table
-        return    = tl_bapiret.
-
-*************************************************************************************
-*	  " A partir daqui, fiz o código dinâmico para receber qualquer tabela.
-*************************************************************************************
-*    DATA:
-*      vl_index TYPE sy-tabix.
-*
-**   " A linha 3 marca o inicio de uma nova linha.
-*    LOOP AT tl_xml_table WHERE hier EQ 3 AND cname = 'row'.
-*      vl_idex = sy-tabix.
-*      READ TABLE tl_xml_table INTO wl_
-*
-*    ENDLOOP.
-
-  ENDMETHOD.
-
-
-* <SIGNATURE>---------------------------------------------------------------------------------------+
-* | Static Public Method ZCL_UTILITIES=>MESSAGE_PREPARE
-* +-------------------------------------------------------------------------------------------------+
-* | [--->] IV_LANGUAGE                    TYPE        T100-SPRSL
-* | [--->] IV_ID                          TYPE        T100-ARBGB
-* | [--->] IV_NO                          TYPE        T100-MSGNR
-* | [--->] IV_MSG_VAR1                    TYPE        BALM-MSGV1(optional)
-* | [--->] IV_MSG_VAR2                    TYPE        BALM-MSGV2(optional)
-* | [--->] IV_MSG_VAR3                    TYPE        BALM-MSGV3(optional)
-* | [--->] IV_MSG_VAR4                    TYPE        BALM-MSGV4(optional)
-* | [<-()] RV_TEXT                        TYPE        STRING
-* +--------------------------------------------------------------------------------------</SIGNATURE>
-  METHOD message_prepare.
-
-
-
-    CALL FUNCTION 'MESSAGE_PREPARE'
-      EXPORTING
-        language               = iv_language
-        msg_id                 = iv_id
-        msg_no                 = iv_no
-        msg_var1               = iv_msg_var1
-        msg_var2               = iv_msg_var2
-        msg_var3               = iv_msg_var3
-        msg_var4               = iv_msg_var4
-      IMPORTING
-        msg_text               = rv_text
-      EXCEPTIONS
-        function_not_completed = 1
-        message_not_found      = 2
-        OTHERS                 = 3.
-
-    IF sy-subrc <> 0.
-* Implement suitable error handling here
-    ENDIF.
-
-
-
-  ENDMETHOD.
-
-
-* <SIGNATURE>---------------------------------------------------------------------------------------+
-* | Static Public Method ZCL_UTILITIES=>POPUP_MESSAGE_FROM_TAB
-* +-------------------------------------------------------------------------------------------------+
-* | [--->] IT_MESSAGES                    TYPE        BAPIRET2_T
-* +--------------------------------------------------------------------------------------</SIGNATURE>
-  METHOD popup_message_from_tab.
-    DATA:
-      tl_messages TYPE STANDARD TABLE OF /accgo/cmn_s_alv,
-      wl_messages LIKE LINE OF tl_messages.
-
-    DATA:
-      vl_msg_id   TYPE t100-arbgb,
-      vl_msg_no   TYPE t100-msgnr,
-      vl_msg_var1 TYPE balm-msgv1,
-      vl_msg_var2 TYPE balm-msgv2,
-      vl_msg_var3 TYPE balm-msgv3,
-      vl_msg_var4 TYPE balm-msgv4.
-
-    LOOP AT it_messages ASSIGNING FIELD-SYMBOL(<fs_messages>).
-      CLEAR wl_messages.
-
-      vl_msg_id    = <fs_messages>-id .
-      vl_msg_no    = <fs_messages>-number .
-      vl_msg_var1  = <fs_messages>-message_v1 .
-      vl_msg_var2  = <fs_messages>-message_v2 .
-      vl_msg_var3  = <fs_messages>-message_v3 .
-      vl_msg_var4  = <fs_messages>-message_v4 .
-
-      CASE <fs_messages>-type.
-        WHEN 'S'.
-          wl_messages-id = icon_green_light.
-        WHEN 'W'.
-          wl_messages-id = icon_yellow_light.
-        WHEN 'E'.
-          wl_messages-id = icon_red_light.
-        WHEN OTHERS.
-          wl_messages-id = icon_light_out.
-      ENDCASE.
-
-      CALL FUNCTION 'MESSAGE_PREPARE'
-        EXPORTING
-          language               = sy-langu
-          msg_id                 = vl_msg_id
-          msg_no                 = vl_msg_no
-          msg_var1               = vl_msg_var1
-          msg_var2               = vl_msg_var2
-          msg_var3               = vl_msg_var3
-          msg_var4               = vl_msg_var4
-        IMPORTING
-          msg_text               = wl_messages-message
-        EXCEPTIONS
-          function_not_completed = 1
-          message_not_found      = 2
-          OTHERS                 = 3.
-
-      APPEND wl_messages TO tl_messages.
-    ENDLOOP.
-
-    CALL FUNCTION 'REUSE_ALV_POPUP_TO_SELECT'
-      EXPORTING
-        i_zebra               = abap_true
-        i_screen_start_column = 1
-        i_screen_start_line   = 1
-        i_screen_end_column   = 100
-        i_screen_end_line     = 20
-        i_tabname             = 'MESSAGES'
-        i_structure_name      = '/ACCGO/CMN_S_ALV'
-      TABLES
-        t_outtab              = tl_messages[]
-      EXCEPTIONS
-        program_error         = 1
-        OTHERS                = 2.
-    IF sy-subrc <> 0.
-* Implement suitable error handling here
-    ENDIF.
-  ENDMETHOD.
-
-
-* <SIGNATURE>---------------------------------------------------------------------------------------+
-* | Static Public Method ZCL_UTILITIES=>POPUP_TO_CONFIRM
-* +-------------------------------------------------------------------------------------------------+
-* | [--->] IV_TITLE                       TYPE        STRING
-* | [--->] IV_QUESTION                    TYPE        STRING
-* | [<-()] RV_CONFIRMAR                   TYPE        ABAP_BOOL
-* | [!CX!] CX_IDM_ERROR
-* +--------------------------------------------------------------------------------------</SIGNATURE>
-  METHOD popup_to_confirm.
-    DATA vl_answer TYPE char1.
-    CALL FUNCTION 'POPUP_TO_CONFIRM'
-      EXPORTING
-        titlebar       = iv_title
-        text_question  = iv_question
-        text_button_1  = 'Sim'
-        text_button_2  = 'Não'
-        start_column   = 40
-        start_row      = 8
-      IMPORTING
-        answer         = vl_answer
-      EXCEPTIONS
-        text_not_found = 1
-        OTHERS         = 2.
-
-    IF vl_answer EQ '1'.
-      rv_confirmar = abap_true.
-    ELSE.
-      RAISE EXCEPTION TYPE cx_idm_error
-        EXPORTING
-          message = VALUE #( type = 'E' id = 'ZMIG' number = 016 ). " Operação cancelada pelo usuário.
-    ENDIF.
-  ENDMETHOD.
-
-
-* <SIGNATURE>---------------------------------------------------------------------------------------+
-* | Static Public Method ZCL_UTILITIES=>READ_PARAMETER_STVARV
-* +-------------------------------------------------------------------------------------------------+
-* | [--->] IV_NAME                        TYPE        ANY
-* | [--->] IT_TABLE                       TYPE        TVARVC_T
-* | [<---] EV_VALUE                       TYPE        ANY
-* +--------------------------------------------------------------------------------------</SIGNATURE>
-  METHOD read_parameter_stvarv.
-    FIELD-SYMBOLS: <fl_table> LIKE LINE OF it_table.
-    UNASSIGN: <fl_table>.
-    READ TABLE it_table ASSIGNING <fl_table> WITH KEY name = iv_name.
-    IF sy-subrc EQ 0.
-      ev_value = <fl_table>-low.
-    ENDIF.
-  ENDMETHOD.
-
-
-* <SIGNATURE>---------------------------------------------------------------------------------------+
-* | Static Public Method ZCL_UTILITIES=>REMOVER_CARACTERES_ESPECIAIS
-* +-------------------------------------------------------------------------------------------------+
-* | [--->] IV_STRING                      TYPE        STRING
-* | [--->] IV_LETRAS_NUMEROS              TYPE        ABAP_BOOL(optional)
-* | [<-()] RV_STRING                      TYPE        STRING
-* +--------------------------------------------------------------------------------------</SIGNATURE>
-  METHOD remover_caracteres_especiais.
-*   " Baseada na função ES_REMOVE_SPECIAL_CHARACTER, que não foi utilizada pois transforma os caracteres em uppercase
-*   " e não realiza algumas substituições necessárias dos caracteres.
-    DATA:
-      vl_string            TYPE string,
-      lv_allowed_char_m340 TYPE c LENGTH 75 VALUE ' &,-.0123456789:;ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz_/()"''', "#EC *
-      lv_letras_numeros    TYPE c LENGTH 75 VALUE ' .,0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz', "#EC *
-      lv_replace_by_a_l    TYPE c LENGTH 6 VALUE 'äàâãáå',  "#EC *
-      lv_replace_by_e_l    TYPE c LENGTH 4 VALUE 'ëèêé',    "#EC *
-      lv_replace_by_i_l    TYPE c LENGTH 4 VALUE 'ïìîí',    "#EC *
-      lv_replace_by_o_l    TYPE c LENGTH 6 VALUE 'öòôõóø',  "#EC *
-      lv_replace_by_u_l    TYPE c LENGTH 4 VALUE 'üùûú',    "#EC *
-      lv_replace_by_c_l    TYPE c LENGTH 1 VALUE 'ç',       "#EC *
-      lv_replace_by_n_l    TYPE c LENGTH 1 VALUE 'ñ',       "#EC *
-      lv_replace_by_z_l    TYPE c LENGTH 1 VALUE 'ž'.       "#EC *
-
-    vl_string = iv_string.
-*    vl_string = '123 *ÄÀÂÃÁÅäàâãáå #ËÈÊÉëèêé $ÏÌÎÍïìîí %ÖÒÔÕÓØöòôõóø &ÜÙÛÚüùûú =ÇçÑñŽž'.
-
-*   " Realiza a substituição dos caracteres com formatos diferentes, não aceitos pelo SIAFI.
-    vl_string = replace( val = vl_string regex = |[{ lv_replace_by_a_l }]| with = 'a' occ = 0 ).
-    vl_string = replace( val = vl_string regex = |[{ lv_replace_by_e_l }]| with = 'e' occ = 0 ).
-    vl_string = replace( val = vl_string regex = |[{ lv_replace_by_i_l }]| with = 'i' occ = 0 ).
-    vl_string = replace( val = vl_string regex = |[{ lv_replace_by_o_l }]| with = 'o' occ = 0 ).
-    vl_string = replace( val = vl_string regex = |[{ lv_replace_by_u_l }]| with = 'u' occ = 0 ).
-    vl_string = replace( val = vl_string regex = |[{ lv_replace_by_c_l }]| with = 'c' occ = 0 ).
-    vl_string = replace( val = vl_string regex = |[{ lv_replace_by_n_l }]| with = 'n' occ = 0 ).
-    vl_string = replace( val = vl_string regex = |[{ lv_replace_by_z_l }]| with = 'z' occ = 0 ).
-
-    vl_string = replace( val = vl_string regex = |[{ to_upper( lv_replace_by_a_l ) }]| with = 'A' occ = 0 ).
-    vl_string = replace( val = vl_string regex = |[{ to_upper( lv_replace_by_e_l ) }]| with = 'E' occ = 0 ).
-    vl_string = replace( val = vl_string regex = |[{ to_upper( lv_replace_by_i_l ) }]| with = 'I' occ = 0 ).
-    vl_string = replace( val = vl_string regex = |[{ to_upper( lv_replace_by_o_l ) }]| with = 'O' occ = 0 ).
-    vl_string = replace( val = vl_string regex = |[{ to_upper( lv_replace_by_u_l ) }]| with = 'U' occ = 0 ).
-    vl_string = replace( val = vl_string regex = |[{ to_upper( lv_replace_by_c_l ) }]| with = 'C' occ = 0 ).
-    vl_string = replace( val = vl_string regex = |[{ to_upper( lv_replace_by_n_l ) }]| with = 'N' occ = 0 ).
-    vl_string = replace( val = vl_string regex = |[{ to_upper( lv_replace_by_z_l ) }]| with = 'Z' occ = 0 ).
-
-*   " Tratamento para os demais caracteres.
-    vl_string = replace( val = vl_string regex = |[^{ lv_allowed_char_m340 }]| with = ' ' occ = 0 ).
-
-*   " Remove os campos diferentes de letras e numeros.
-    IF iv_letras_numeros EQ abap_true.
-      vl_string = replace( val = vl_string regex = |[^{ lv_letras_numeros }]| with = ' ' occ = 0 ).
-    ENDIF.
-
-    rv_string = vl_string.
-
-*    IF vl_string CA to_upper( lv_replace_by_a_l ).
-*      vl_string = replace( val = vl_string regex = |[{ to_upper( lv_replace_by_a_l ) }]| with = 'A' occ = 0 ).
-*    ENDIF.
-*
-*    IF vl_string CA lv_replace_by_a_l .
-*      vl_string = replace( val = vl_string regex = |[{ lv_replace_by_a_l }]| with = 'a' occ = 0 ).
-*    ENDIF.
-*
-*    IF vl_string CA to_upper( lv_replace_by_e_l )   .
-*      vl_string = replace( val = vl_string regex = |[{ to_upper( lv_replace_by_e_l ) }]| with = 'E' occ = 0 ).
-*    ENDIF.
-*
-*    IF vl_string CA lv_replace_by_e_l .
-*      vl_string = replace( val = vl_string regex = |[{ lv_replace_by_e_l }]| with = 'e' occ = 0 ).
-*    ENDIF.
-*
-*    IF vl_string CA to_upper( lv_replace_by_i_l )   .
-*      vl_string = replace( val = vl_string regex = |[{ to_upper( lv_replace_by_i_l ) }]| with = 'I' occ = 0 ).
-*    ENDIF.
-*
-*    IF vl_string CA lv_replace_by_i_l .
-*      vl_string = replace( val = vl_string regex = |[{ lv_replace_by_i_l }]| with = 'i' occ = 0 ).
-*    ENDIF.
-*
-*    IF vl_string CA to_upper( lv_replace_by_o_l )   .
-*      vl_string = replace( val = vl_string regex = |[{ to_upper( lv_replace_by_o_l ) }]| with = 'O' occ = 0 ).
-*    ENDIF.
-*
-*    IF vl_string CA lv_replace_by_o_l .
-*      vl_string = replace( val = vl_string regex = |[{ lv_replace_by_o_l }]| with = 'o' occ = 0 ).
-*    ENDIF.
-*
-*    IF vl_string CA to_upper( lv_replace_by_u_l )   .
-*      vl_string = replace( val = vl_string regex = |[{ to_upper( lv_replace_by_u_l ) }]| with = 'U' occ = 0 ).
-*    ENDIF.
-*
-*    IF vl_string CA lv_replace_by_u_l .
-*      vl_string = replace( val = vl_string regex = |[{ lv_replace_by_u_l }]| with = 'u' occ = 0 ).
-*    ENDIF.
-*
-*    IF vl_string CA to_upper( lv_replace_by_c_l )   .
-*      vl_string = replace( val = vl_string regex = |[{ to_upper( lv_replace_by_c_l ) }]| with = 'C' occ = 0 ).
-*    ENDIF.
-*
-*    IF vl_string CA lv_replace_by_c_l .
-*      vl_string = replace( val = vl_string regex = |[{ lv_replace_by_c_l }]| with = 'c' occ = 0 ).
-*    ENDIF.
-*
-*    IF vl_string CA to_upper( lv_replace_by_n_l ) .
-*      vl_string = replace( val = vl_string regex = |[{ to_upper( lv_replace_by_n_l ) }]| with = 'N' occ = 0 ).
-*    ENDIF.
-*
-*    IF vl_string CA lv_replace_by_n_l .
-*      vl_string = replace( val = vl_string regex = |[{ lv_replace_by_n_l }]| with = 'n' occ = 0 ).
-*    ENDIF.
-*
-*    IF vl_string CA to_upper( lv_replace_by_z_l )   .
-*      vl_string = replace( val = vl_string regex = |[{  to_upper( lv_replace_by_z_l ) }]| with = 'Z' occ = 0 ).
-*    ENDIF.
-*
-*    IF vl_string CA lv_replace_by_z_l .
-*      vl_string = replace( val = vl_string regex = |[{ lv_replace_by_z_l }]| with = 'z' occ = 0 ).
-*    ENDIF.
-*
-**   " Tratamento para os demais caracteres.
-*    vl_string = replace( val = vl_string regex = |[^{ lv_allowed_char_m340 }]| with = ' ' occ = 0 ).
-*
-**   " Remove os campos diferentes de letras e numeros.
-*    IF iv_letras_numeros EQ abap_true.
-*      vl_string = replace( val = vl_string regex = |[^{ lv_letras_numeros }]| with = ' ' occ = 0 ).
-*    ENDIF.
-*
-*    rv_string = vl_string.
-  ENDMETHOD.
-
-
-* <SIGNATURE>---------------------------------------------------------------------------------------+
-* | Static Public Method ZCL_UTILITIES=>SELECIONAR_ARQUIVO_LOCAL
-* +-------------------------------------------------------------------------------------------------+
-* | [--->] IV_DESKTOP                     TYPE        ABAP_BOOL(optional)
-* | [--->] IV_DEFAULT_EXTENSION           TYPE        STRING(optional)
-* | [<-()] RV_ENDERECO                    TYPE        STRING
-* +--------------------------------------------------------------------------------------</SIGNATURE>
-  METHOD selecionar_arquivo_local.
-
-    DATA:
-      lt_arquivo TYPE filetable,
-      lv_desktop TYPE string,
-      vl_dummy   TYPE i. "Sem utilidade
-
-    IF iv_desktop EQ abap_true.
-      cl_gui_frontend_services=>get_desktop_directory(
-       CHANGING
-         desktop_directory    = lv_desktop
-       EXCEPTIONS
-         cntl_error           = 1
-         error_no_gui         = 2
-         not_supported_by_gui = 3
-         OTHERS               = 4 ).
-
-      cl_gui_cfw=>update_view( ).
-    ENDIF.
-
-    cl_gui_frontend_services=>file_open_dialog(
-      EXPORTING
-        default_extension       = iv_default_extension
-        file_filter             = iv_default_extension
-        initial_directory       = lv_desktop
-      CHANGING
-        file_table = lt_arquivo
-        rc         = vl_dummy ).
-
-    READ TABLE lt_arquivo ASSIGNING FIELD-SYMBOL(<fs_arquivo>) INDEX 1.
-    IF sy-subrc IS INITIAL.
-      rv_endereco = <fs_arquivo>-filename.
-    ENDIF.
-  ENDMETHOD.
-
-
-* <SIGNATURE>---------------------------------------------------------------------------------------+
-* | Static Public Method ZCL_UTILITIES=>SELECIONAR_ARQUIVO_SERVIDOR
-* +-------------------------------------------------------------------------------------------------+
-* | [<-()] RV_ENDERECO                    TYPE        STRING
-* +--------------------------------------------------------------------------------------</SIGNATURE>
-  METHOD selecionar_arquivo_servidor.
-    DATA:
-      vl_i_path   TYPE dxfields-longpath,
-      vl_e_path   TYPE dxfields-longpath,
-      iw_rfcsi    TYPE rfcsi,
-      vl_i_server TYPE msxxlist-name.
-
-    CALL FUNCTION 'RFC_SYSTEM_INFO'
-      IMPORTING
-        rfcsi_export = iw_rfcsi.
-
-    vl_i_server = iw_rfcsi-rfcdest.
-
-    vl_i_path = '/usr/sap'.
-    CALL FUNCTION 'F4_DXFILENAME_TOPRECURSION'
-      EXPORTING
-        i_location_flag = 'A'
-        i_server        = vl_i_server
-        i_path          = vl_i_path
-      IMPORTING
-        o_path          = vl_e_path
-      EXCEPTIONS
-        rfc_error       = 1
-        error_with_gui  = 2
-        OTHERS          = 3.
-
-    IF sy-subrc EQ 0.
-      rv_endereco = vl_e_path.
-    ENDIF.
-  ENDMETHOD.
-
-
-* <SIGNATURE>---------------------------------------------------------------------------------------+
-* | Static Public Method ZCL_UTILITIES=>TRANSFORM_LINE_MESSAGE
-* +-------------------------------------------------------------------------------------------------+
-* | [--->] IV_TXT                         TYPE        ANY
-* | [<---] EV_MSG1                        TYPE        SYMSGV
-* | [<---] EV_MSG2                        TYPE        SYMSGV
-* | [<---] EV_MSG3                        TYPE        SYMSGV
-* | [<---] EV_MSG4                        TYPE        SYMSGV
-* +--------------------------------------------------------------------------------------</SIGNATURE>
-  METHOD transform_line_message.
-    DATA: vl_txt TYPE c LENGTH 5000,
-          vl_pos TYPE i,
-          vl_aux TYPE string.
-    FIELD-SYMBOLS <fl_var> TYPE any.
-    CLEAR: vl_txt, vl_pos, vl_aux, ev_msg1, ev_msg2, ev_msg3, ev_msg4.
-    vl_txt = iv_txt.
-    "Mudança para atender ao SIAFI WS pelo tamanho enorme das mensagens.
-    IF vl_txt CS 'Unmarshalling Error: cvc-pattern-valid:'.
-      REPLACE ALL OCCURRENCES OF 'Unmarshalling Error: cvc-pattern-valid:' IN vl_txt WITH ''.
-    ENDIF.
-    DO 4 TIMES.
-      CLEAR: vl_aux.
-      UNASSIGN: <fl_var>.
-      vl_aux = 'ev_msg' && sy-index.
-      ASSIGN (vl_aux) TO <fl_var>.
-      IF <fl_var> IS ASSIGNED.
-        CLEAR: <fl_var>.
-        <fl_var> = vl_txt+vl_pos(50).
-        IF <fl_var> IS INITIAL.
-          EXIT.
-        ENDIF.
-        ADD 50 TO vl_pos.
-      ENDIF.
-    ENDDO.
-  ENDMETHOD.
 
 
 * <SIGNATURE>---------------------------------------------------------------------------------------+
@@ -1478,5 +339,1132 @@ CLASS zcl_utilities IMPLEMENTATION.
 
     ENDIF.
 
+  ENDMETHOD.
+
+
+* <SIGNATURE>---------------------------------------------------------------------------------------+
+* | Static Public Method ZCL_UTILITIES=>TRANSFORM_LINE_MESSAGE
+* +-------------------------------------------------------------------------------------------------+
+* | [--->] IV_TXT                         TYPE        ANY
+* | [<---] EV_MSG1                        TYPE        SYMSGV
+* | [<---] EV_MSG2                        TYPE        SYMSGV
+* | [<---] EV_MSG3                        TYPE        SYMSGV
+* | [<---] EV_MSG4                        TYPE        SYMSGV
+* | [<---] EV_MSG_FULL                    TYPE        STRING
+* +--------------------------------------------------------------------------------------</SIGNATURE>
+  METHOD transform_line_message.
+    DATA: vl_txt TYPE c LENGTH 5000,
+          vl_pos TYPE i,
+          vl_aux TYPE string.
+    FIELD-SYMBOLS <fl_var> TYPE any.
+    CLEAR: vl_txt, vl_pos, vl_aux, ev_msg1, ev_msg2, ev_msg3, ev_msg4.
+    vl_txt = iv_txt.
+
+    "Mudança para atender ao SIAFI WS pelo tamanho enorme das mensagens.
+    IF vl_txt CS 'Unmarshalling Error: cvc-pattern-valid:'.
+      REPLACE ALL OCCURRENCES OF 'Unmarshalling Error: cvc-pattern-valid:' IN vl_txt WITH ''.
+    ENDIF.
+
+*   " Exclusão genérica criada para atender a todos os demais erros.
+    IF vl_txt CS 'Unmarshalling Error:'.
+      DATA vl_string TYPE string.
+      vl_string = vl_txt.
+      vl_string = match( val = vl_string regex = 'd:(.*)' occ = 1 ).
+      IF vl_string IS NOT INITIAL.
+        REPLACE FIRST OCCURRENCE OF 'd:' IN vl_string WITH ''.
+        vl_txt = vl_string.
+      ENDIF.
+    ENDIF.
+
+    DO 4 TIMES.
+      CLEAR: vl_aux.
+      UNASSIGN: <fl_var>.
+      vl_aux = 'ev_msg' && sy-index.
+      ASSIGN (vl_aux) TO <fl_var>.
+      IF <fl_var> IS ASSIGNED.
+        CLEAR: <fl_var>.
+        <fl_var> = vl_txt+vl_pos(50).
+        IF <fl_var> IS INITIAL.
+          EXIT.
+        ENDIF.
+        ADD 50 TO vl_pos.
+      ENDIF.
+    ENDDO.
+
+*   " Retorna a mensagem tratada.
+    ev_msg_full = vl_txt.
+
+  ENDMETHOD.
+
+
+* <SIGNATURE>---------------------------------------------------------------------------------------+
+* | Static Public Method ZCL_UTILITIES=>SELECIONAR_ARQUIVO_SERVIDOR
+* +-------------------------------------------------------------------------------------------------+
+* | [<-()] RV_ENDERECO                    TYPE        STRING
+* +--------------------------------------------------------------------------------------</SIGNATURE>
+  METHOD selecionar_arquivo_servidor.
+    DATA:
+      vl_i_path   TYPE dxfields-longpath,
+      vl_e_path   TYPE dxfields-longpath,
+      iw_rfcsi    TYPE rfcsi,
+      vl_i_server TYPE msxxlist-name.
+
+    CALL FUNCTION 'RFC_SYSTEM_INFO'
+      IMPORTING
+        rfcsi_export = iw_rfcsi.
+
+    vl_i_server = iw_rfcsi-rfcdest.
+
+    vl_i_path = '/usr/sap'.
+    CALL FUNCTION 'F4_DXFILENAME_TOPRECURSION'
+      EXPORTING
+        i_location_flag = 'A'
+        i_server        = vl_i_server
+        i_path          = vl_i_path
+      IMPORTING
+        o_path          = vl_e_path
+      EXCEPTIONS
+        rfc_error       = 1
+        error_with_gui  = 2
+        OTHERS          = 3.
+
+    IF sy-subrc EQ 0.
+      rv_endereco = vl_e_path.
+    ENDIF.
+  ENDMETHOD.
+
+
+* <SIGNATURE>---------------------------------------------------------------------------------------+
+* | Static Public Method ZCL_UTILITIES=>SELECIONAR_ARQUIVO_LOCAL
+* +-------------------------------------------------------------------------------------------------+
+* | [--->] IV_DESKTOP                     TYPE        ABAP_BOOL(optional)
+* | [--->] IV_DEFAULT_EXTENSION           TYPE        STRING(optional)
+* | [<-()] RV_ENDERECO                    TYPE        STRING
+* +--------------------------------------------------------------------------------------</SIGNATURE>
+  METHOD selecionar_arquivo_local.
+
+    DATA:
+      lt_arquivo TYPE filetable,
+      lv_desktop TYPE string,
+      vl_dummy   TYPE i. "Sem utilidade
+
+    IF iv_desktop EQ abap_true.
+      cl_gui_frontend_services=>get_desktop_directory(
+       CHANGING
+         desktop_directory    = lv_desktop
+       EXCEPTIONS
+         cntl_error           = 1
+         error_no_gui         = 2
+         not_supported_by_gui = 3
+         OTHERS               = 4 ).
+
+      cl_gui_cfw=>update_view( ).
+    ENDIF.
+
+    cl_gui_frontend_services=>file_open_dialog(
+      EXPORTING
+        default_extension       = iv_default_extension
+        file_filter             = iv_default_extension
+        initial_directory       = lv_desktop
+      CHANGING
+        file_table = lt_arquivo
+        rc         = vl_dummy ).
+
+    READ TABLE lt_arquivo ASSIGNING FIELD-SYMBOL(<fs_arquivo>) INDEX 1.
+    IF sy-subrc IS INITIAL.
+      rv_endereco = <fs_arquivo>-filename.
+    ENDIF.
+  ENDMETHOD.
+
+
+* <SIGNATURE>---------------------------------------------------------------------------------------+
+* | Static Public Method ZCL_UTILITIES=>REMOVER_CARACTERES_ESPECIAIS
+* +-------------------------------------------------------------------------------------------------+
+* | [--->] IV_STRING                      TYPE        STRING
+* | [--->] IV_LETRAS_NUMEROS              TYPE        ABAP_BOOL(optional)
+* | [<-()] RV_STRING                      TYPE        STRING
+* +--------------------------------------------------------------------------------------</SIGNATURE>
+  METHOD remover_caracteres_especiais.
+*   " Baseada na função ES_REMOVE_SPECIAL_CHARACTER, que não foi utilizada pois transforma os caracteres em uppercase
+*   " e não realiza algumas substituições necessárias dos caracteres.
+    DATA:
+      vl_string            TYPE string,
+      lv_allowed_char_m340 TYPE c LENGTH 75 VALUE ' &,-.0123456789:;ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz_/()"''', "#EC *
+      lv_letras_numeros    TYPE c LENGTH 75 VALUE ' .,0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz', "#EC *
+      lv_replace_by_a_l    TYPE c LENGTH 6 VALUE 'äàâãáå',  "#EC *
+      lv_replace_by_e_l    TYPE c LENGTH 4 VALUE 'ëèêé',    "#EC *
+      lv_replace_by_i_l    TYPE c LENGTH 4 VALUE 'ïìîí',    "#EC *
+      lv_replace_by_o_l    TYPE c LENGTH 6 VALUE 'öòôõóø',  "#EC *
+      lv_replace_by_u_l    TYPE c LENGTH 4 VALUE 'üùûú',    "#EC *
+      lv_replace_by_c_l    TYPE c LENGTH 1 VALUE 'ç',       "#EC *
+      lv_replace_by_n_l    TYPE c LENGTH 1 VALUE 'ñ',       "#EC *
+      lv_replace_by_z_l    TYPE c LENGTH 1 VALUE 'ž'.       "#EC *
+
+    vl_string = iv_string.
+*    vl_string = '123 *ÄÀÂÃÁÅäàâãáå #ËÈÊÉëèêé $ÏÌÎÍïìîí %ÖÒÔÕÓØöòôõóø &ÜÙÛÚüùûú =ÇçÑñŽž'.
+
+*   " Realiza a substituição dos caracteres com formatos diferentes, não aceitos pelo SIAFI.
+    vl_string = replace( val = vl_string regex = |[{ lv_replace_by_a_l }]| with = 'a' occ = 0 ).
+    vl_string = replace( val = vl_string regex = |[{ lv_replace_by_e_l }]| with = 'e' occ = 0 ).
+    vl_string = replace( val = vl_string regex = |[{ lv_replace_by_i_l }]| with = 'i' occ = 0 ).
+    vl_string = replace( val = vl_string regex = |[{ lv_replace_by_o_l }]| with = 'o' occ = 0 ).
+    vl_string = replace( val = vl_string regex = |[{ lv_replace_by_u_l }]| with = 'u' occ = 0 ).
+    vl_string = replace( val = vl_string regex = |[{ lv_replace_by_c_l }]| with = 'c' occ = 0 ).
+    vl_string = replace( val = vl_string regex = |[{ lv_replace_by_n_l }]| with = 'n' occ = 0 ).
+    vl_string = replace( val = vl_string regex = |[{ lv_replace_by_z_l }]| with = 'z' occ = 0 ).
+
+    vl_string = replace( val = vl_string regex = |[{ to_upper( lv_replace_by_a_l ) }]| with = 'A' occ = 0 ).
+    vl_string = replace( val = vl_string regex = |[{ to_upper( lv_replace_by_e_l ) }]| with = 'E' occ = 0 ).
+    vl_string = replace( val = vl_string regex = |[{ to_upper( lv_replace_by_i_l ) }]| with = 'I' occ = 0 ).
+    vl_string = replace( val = vl_string regex = |[{ to_upper( lv_replace_by_o_l ) }]| with = 'O' occ = 0 ).
+    vl_string = replace( val = vl_string regex = |[{ to_upper( lv_replace_by_u_l ) }]| with = 'U' occ = 0 ).
+    vl_string = replace( val = vl_string regex = |[{ to_upper( lv_replace_by_c_l ) }]| with = 'C' occ = 0 ).
+    vl_string = replace( val = vl_string regex = |[{ to_upper( lv_replace_by_n_l ) }]| with = 'N' occ = 0 ).
+    vl_string = replace( val = vl_string regex = |[{ to_upper( lv_replace_by_z_l ) }]| with = 'Z' occ = 0 ).
+
+*   " Tratamento para os demais caracteres.
+    vl_string = replace( val = vl_string regex = |[^{ lv_allowed_char_m340 }]| with = ' ' occ = 0 ).
+
+*   " Remove os campos diferentes de letras e numeros.
+    IF iv_letras_numeros EQ abap_true.
+      vl_string = replace( val = vl_string regex = |[^{ lv_letras_numeros }]| with = ' ' occ = 0 ).
+    ENDIF.
+
+    rv_string = vl_string.
+
+  ENDMETHOD.
+
+
+* <SIGNATURE>---------------------------------------------------------------------------------------+
+* | Static Public Method ZCL_UTILITIES=>READ_PARAMETER_STVARV
+* +-------------------------------------------------------------------------------------------------+
+* | [--->] IV_NAME                        TYPE        ANY
+* | [--->] IT_TABLE                       TYPE        TVARVC_T
+* | [<---] EV_VALUE                       TYPE        ANY
+* +--------------------------------------------------------------------------------------</SIGNATURE>
+  METHOD read_parameter_stvarv.
+    FIELD-SYMBOLS: <fl_table> LIKE LINE OF it_table.
+    UNASSIGN: <fl_table>.
+    READ TABLE it_table ASSIGNING <fl_table> WITH KEY name = iv_name.
+    IF sy-subrc EQ 0.
+      ev_value = <fl_table>-low.
+    ENDIF.
+  ENDMETHOD.
+
+
+* <SIGNATURE>---------------------------------------------------------------------------------------+
+* | Static Public Method ZCL_UTILITIES=>POPUP_TO_CONFIRM
+* +-------------------------------------------------------------------------------------------------+
+* | [--->] IV_TITLE                       TYPE        STRING
+* | [--->] IV_QUESTION                    TYPE        STRING
+* | [<-()] RV_CONFIRMAR                   TYPE        ABAP_BOOL
+* | [!CX!] CX_IDM_ERROR
+* +--------------------------------------------------------------------------------------</SIGNATURE>
+  METHOD popup_to_confirm.
+    DATA vl_answer TYPE char1.
+    CALL FUNCTION 'POPUP_TO_CONFIRM'
+      EXPORTING
+        titlebar       = iv_title
+        text_question  = iv_question
+        text_button_1  = 'Sim'
+        text_button_2  = 'Não'
+        start_column   = 40
+        start_row      = 8
+      IMPORTING
+        answer         = vl_answer
+      EXCEPTIONS
+        text_not_found = 1
+        OTHERS         = 2.
+
+    IF vl_answer EQ '1'.
+      rv_confirmar = abap_true.
+    ELSE.
+      RAISE EXCEPTION TYPE cx_idm_error
+        EXPORTING
+          message = VALUE #( type = 'E' id = '/FHG/UTIL' number = 000 message_v1 = 'Operação cancelada pelo usuário' ).
+    ENDIF.
+  ENDMETHOD.
+
+
+* <SIGNATURE>---------------------------------------------------------------------------------------+
+* | Static Public Method ZCL_UTILITIES=>POPUP_MESSAGE_FROM_TAB
+* +-------------------------------------------------------------------------------------------------+
+* | [--->] IT_MESSAGES                    TYPE        BAPIRET2_T
+* +--------------------------------------------------------------------------------------</SIGNATURE>
+  METHOD popup_message_from_tab.
+    DATA:
+      tl_messages TYPE STANDARD TABLE OF /accgo/cmn_s_alv,
+      wl_messages LIKE LINE OF tl_messages.
+
+    DATA:
+      vl_msg_id   TYPE t100-arbgb,
+      vl_msg_no   TYPE t100-msgnr,
+      vl_msg_var1 TYPE balm-msgv1,
+      vl_msg_var2 TYPE balm-msgv2,
+      vl_msg_var3 TYPE balm-msgv3,
+      vl_msg_var4 TYPE balm-msgv4.
+
+    LOOP AT it_messages ASSIGNING FIELD-SYMBOL(<fs_messages>).
+      CLEAR wl_messages.
+
+      vl_msg_id    = <fs_messages>-id .
+      vl_msg_no    = <fs_messages>-number .
+      vl_msg_var1  = <fs_messages>-message_v1 .
+      vl_msg_var2  = <fs_messages>-message_v2 .
+      vl_msg_var3  = <fs_messages>-message_v3 .
+      vl_msg_var4  = <fs_messages>-message_v4 .
+
+      CASE <fs_messages>-type.
+        WHEN 'S'.
+          wl_messages-id = icon_green_light.
+        WHEN 'W'.
+          wl_messages-id = icon_yellow_light.
+        WHEN 'E'.
+          wl_messages-id = icon_red_light.
+        WHEN OTHERS.
+          wl_messages-id = icon_light_out.
+      ENDCASE.
+
+      CALL FUNCTION 'MESSAGE_PREPARE'
+        EXPORTING
+          language               = sy-langu
+          msg_id                 = vl_msg_id
+          msg_no                 = vl_msg_no
+          msg_var1               = vl_msg_var1
+          msg_var2               = vl_msg_var2
+          msg_var3               = vl_msg_var3
+          msg_var4               = vl_msg_var4
+        IMPORTING
+          msg_text               = wl_messages-message
+        EXCEPTIONS
+          function_not_completed = 1
+          message_not_found      = 2
+          OTHERS                 = 3.
+
+      APPEND wl_messages TO tl_messages.
+    ENDLOOP.
+
+    CALL FUNCTION 'REUSE_ALV_POPUP_TO_SELECT'
+      EXPORTING
+        i_zebra               = abap_true
+        i_screen_start_column = 1
+        i_screen_start_line   = 1
+        i_screen_end_column   = 100
+        i_screen_end_line     = 20
+        i_tabname             = 'MESSAGES'
+        i_structure_name      = '/ACCGO/CMN_S_ALV'
+      TABLES
+        t_outtab              = tl_messages[]
+      EXCEPTIONS
+        program_error         = 1
+        OTHERS                = 2.
+    IF sy-subrc <> 0.
+* Implement suitable error handling here
+    ENDIF.
+  ENDMETHOD.
+
+
+* <SIGNATURE>---------------------------------------------------------------------------------------+
+* | Static Public Method ZCL_UTILITIES=>MESSAGE_PREPARE
+* +-------------------------------------------------------------------------------------------------+
+* | [--->] IV_LANGUAGE                    TYPE        T100-SPRSL
+* | [--->] IV_ID                          TYPE        T100-ARBGB
+* | [--->] IV_NO                          TYPE        T100-MSGNR
+* | [--->] IV_MSG_VAR1                    TYPE        BALM-MSGV1(optional)
+* | [--->] IV_MSG_VAR2                    TYPE        BALM-MSGV2(optional)
+* | [--->] IV_MSG_VAR3                    TYPE        BALM-MSGV3(optional)
+* | [--->] IV_MSG_VAR4                    TYPE        BALM-MSGV4(optional)
+* | [<-()] RV_TEXT                        TYPE        STRING
+* +--------------------------------------------------------------------------------------</SIGNATURE>
+  METHOD message_prepare.
+
+
+
+    CALL FUNCTION 'MESSAGE_PREPARE'
+      EXPORTING
+        language               = iv_language
+        msg_id                 = iv_id
+        msg_no                 = iv_no
+        msg_var1               = iv_msg_var1
+        msg_var2               = iv_msg_var2
+        msg_var3               = iv_msg_var3
+        msg_var4               = iv_msg_var4
+      IMPORTING
+        msg_text               = rv_text
+      EXCEPTIONS
+        function_not_completed = 1
+        message_not_found      = 2
+        OTHERS                 = 3.
+
+    IF sy-subrc <> 0.
+* Implement suitable error handling here
+    ENDIF.
+
+
+
+  ENDMETHOD.
+
+
+* <SIGNATURE>---------------------------------------------------------------------------------------+
+* | Static Public Method ZCL_UTILITIES=>LER_XLSX_APP_SERVER
+* +-------------------------------------------------------------------------------------------------+
+* | [--->] IV_SERVIDOR                    TYPE        STRING
+* | [<---] ET_TABLE                       TYPE        ANY TABLE
+* +--------------------------------------------------------------------------------------</SIGNATURE>
+  METHOD ler_xlsx_app_server.
+    DATA:
+      l_len        TYPE sy-tabix,
+      vl_file_size TYPE i,
+      tl_binario   TYPE solix_tab, "STANDARD TABLE OF x255,
+      wl_binario   LIKE LINE OF tl_binario,
+      vl_xstring   TYPE xstring.
+*************************************************************************************
+*	  " Lê o arquivo e o armazena em uma tabela binária.
+*************************************************************************************
+    OPEN DATASET iv_servidor FOR INPUT IN BINARY MODE.
+    DO.
+      CLEAR l_len.
+      READ DATASET iv_servidor INTO wl_binario LENGTH l_len.
+      IF sy-subrc <> 0.
+        IF l_len > 0.
+          vl_file_size = vl_file_size + l_len.
+          APPEND wl_binario TO tl_binario.
+        ENDIF.
+        EXIT.
+      ENDIF.
+      vl_file_size = vl_file_size + l_len.
+      APPEND wl_binario TO tl_binario.
+    ENDDO.
+
+*************************************************************************************
+*	  " Converte os dados do arquivo XLSX de BINÁRIO para XSTRING.
+*************************************************************************************
+    CALL FUNCTION 'SCMS_BINARY_TO_XSTRING'
+      EXPORTING
+        input_length = vl_file_size
+      IMPORTING
+        buffer       = vl_xstring
+      TABLES
+        binary_tab   = tl_binario
+      EXCEPTIONS
+        failed       = 1.
+
+*************************************************************************************
+*	  " Realiza a leitura do arquivo em XLSX e o adapta ao SAP.
+*************************************************************************************
+    TRY .
+        DATA(lo_xlsx_doc)       = cl_xlsx_document=>load_document( iv_data =  vl_xstring ).
+        DATA(lo_workbookpart)   = lo_xlsx_doc->get_workbookpart( ).
+        DATA(lo_wordsheetparts) = lo_workbookpart->get_worksheetparts( ).
+        DATA(lo_wordsheetpart)  = lo_wordsheetparts->get_part( 0 ).
+        DATA(vl_sheet_content)  = lo_wordsheetpart->get_data( ).
+      CATCH cx_openxml_not_found INTO DATA(ol_openxml_not_found).
+        RETURN.
+      CATCH cx_openxml_format INTO DATA(ol_openxml_format).
+        RETURN.
+    ENDTRY.
+
+
+*************************************************************************************
+*	  " Converte o arquivo XLSX adaptado de XSTRING para BINÁRIO.
+*************************************************************************************
+    DATA: gt_bintab TYPE solix_tab.
+    DATA: vl_output_length TYPE i.
+    CALL FUNCTION 'SCMS_XSTRING_TO_BINARY'
+      EXPORTING
+        buffer        = vl_sheet_content
+      IMPORTING
+        output_length = vl_output_length
+      TABLES
+        binary_tab    = gt_bintab.
+
+    DATA vl_text_buffer TYPE string.
+    CALL FUNCTION 'SCMS_BINARY_TO_STRING'
+      EXPORTING
+        input_length = vl_output_length
+*       FIRST_LINE   = 0
+*       LAST_LINE    = 0
+*       MIMETYPE     = ' '
+*       ENCODING     =
+      IMPORTING
+        text_buffer  = vl_text_buffer
+*       output_length = vl_output_length
+      TABLES
+        binary_tab   = gt_bintab
+      EXCEPTIONS
+        failed       = 1
+        OTHERS       = 2.
+    IF sy-subrc <> 0.
+
+    ENDIF.
+
+*************************************************************************************
+*	  " Converte o XLSX Binário em XML.
+*************************************************************************************
+    DATA tl_xml_table TYPE STANDARD TABLE OF smum_xmltb.
+    DATA tl_bapiret TYPE bapiret2_t.
+    CALL FUNCTION 'SMUM_XML_PARSE'
+      EXPORTING
+        xml_input = vl_sheet_content
+      TABLES
+        xml_table = tl_xml_table
+        return    = tl_bapiret.
+
+*************************************************************************************
+*	  " A partir daqui, fiz o código dinâmico para receber qualquer tabela.
+*************************************************************************************
+*    DATA:
+*      vl_index TYPE sy-tabix.
+*
+**   " A linha 3 marca o inicio de uma nova linha.
+*    LOOP AT tl_xml_table WHERE hier EQ 3 AND cname = 'row'.
+*      vl_idex = sy-tabix.
+*      READ TABLE tl_xml_table INTO wl_
+*
+*    ENDLOOP.
+
+  ENDMETHOD.
+
+
+* <SIGNATURE>---------------------------------------------------------------------------------------+
+* | Static Public Method ZCL_UTILITIES=>GERAR_DIRETORIO_TEMP
+* +-------------------------------------------------------------------------------------------------+
+* | [<-()] RV_DIRETORIO                   TYPE        STRING
+* +--------------------------------------------------------------------------------------</SIGNATURE>
+  METHOD gerar_diretorio_temp.
+    DATA var1 TYPE string.
+
+    CALL METHOD cl_gui_frontend_services=>get_user_name
+      CHANGING
+        user_name    = var1
+      EXCEPTIONS
+        cntl_error   = 1
+        error_no_gui = 2
+        OTHERS       = 3.
+
+    IF sy-subrc <> 0.
+*     MESSAGE ID sy-msgid TYPE sy-msgty NUMBER sy-msgno
+*       WITH sy-msgv1 sy-msgv2 sy-msgv3 sy-msgv4.
+    ENDIF.
+
+    CALL METHOD cl_gui_cfw=>update_view
+      EXCEPTIONS
+        cntl_system_error = 1
+        cntl_error        = 2
+        OTHERS            = 3.
+
+    IF var1 IS INITIAL.
+      rv_diretorio = 'C:\temp\'.
+    ELSE.
+      CONCATENATE 'C:\Users\' var1 '\Downloads\temp' INTO rv_diretorio.
+    ENDIF.
+  ENDMETHOD.
+
+
+* <SIGNATURE>---------------------------------------------------------------------------------------+
+* | Static Public Method ZCL_UTILITIES=>GENERATE_FIELDCAT
+* +-------------------------------------------------------------------------------------------------+
+* | [--->] IV_COMPLETE                    TYPE        ABAP_BOOL(optional)
+* | [--->] IT_TABLE                       TYPE        ANY TABLE
+* | [<-()] RT_FCAT                        TYPE        LVC_T_FCAT
+* +--------------------------------------------------------------------------------------</SIGNATURE>
+  METHOD generate_fieldcat.
+    """ Variáveis locais """
+    DATA: lo_table TYPE REF TO data,
+          lo_salv  TYPE REF TO cl_salv_table.
+
+    FIELD-SYMBOLS: <fs_table> TYPE ANY TABLE.
+
+    CREATE DATA lo_table LIKE it_table.
+    ASSIGN lo_table->* TO <fs_table>.
+
+    TRY.
+        cl_salv_table=>factory( IMPORTING
+                                  r_salv_table   = lo_salv
+                                CHANGING
+                                  t_table        = <fs_table>  ).
+
+        rt_fcat = cl_salv_controller_metadata=>get_lvc_fieldcatalog(
+            r_columns      = lo_salv->get_columns( )      " ALV Filter
+            r_aggregations = lo_salv->get_aggregations( ) " ALV Aggregations
+        ).
+      CATCH cx_root.
+    ENDTRY.
+
+    "Completar fcat?
+    IF iv_complete IS NOT INITIAL.
+      CALL FUNCTION 'LVC_FIELDCAT_COMPLETE'
+        CHANGING
+          ct_fieldcat = rt_fcat.
+    ENDIF.
+
+  ENDMETHOD.
+
+
+* <SIGNATURE>---------------------------------------------------------------------------------------+
+* | Static Public Method ZCL_UTILITIES=>ERROR_PROXY
+* +-------------------------------------------------------------------------------------------------+
+* | [--->] IO_SYSFAULT                    TYPE REF TO CX_AI_SYSTEM_FAULT(optional)
+* | [--->] IO_APPFAULT                    TYPE REF TO CX_AI_APPLICATION_FAULT(optional)
+* | [--->] IV_NUMBER                      TYPE        ANY
+* | [--->] IV_CLSMSG                      TYPE        ANY
+* | [<-->] CT_MENSAGENS                   TYPE        BAL_T_MSG
+* | [<-()] RV_ERROR                       TYPE        FLAG
+* +--------------------------------------------------------------------------------------</SIGNATURE>
+  METHOD error_proxy.
+    DATA: vl_txt  TYPE c LENGTH 5000,
+          vl_msg1 TYPE symsgv,
+          vl_msg2 TYPE symsgv,
+          vl_msg3 TYPE symsgv,
+          vl_msg4 TYPE symsgv,
+          vl_aux  TYPE string.
+    CLEAR: vl_txt, vl_aux, vl_msg1, vl_msg2, vl_msg3, vl_msg4.
+    rv_error = abap_true.
+    IF io_sysfault IS BOUND.
+      vl_txt = io_sysfault->get_text( ).
+    ENDIF.
+    IF io_appfault IS BOUND.
+      vl_txt = io_appfault->get_text( ).
+    ENDIF.
+
+    zcl_utilities=>transform_line_message( EXPORTING iv_txt  = vl_txt
+                                           IMPORTING ev_msg1 = vl_msg1
+                                                     ev_msg2 = vl_msg2
+                                                     ev_msg3 = vl_msg3
+                                                     ev_msg4 = vl_msg4 ).
+
+    APPEND INITIAL LINE TO ct_mensagens ASSIGNING FIELD-SYMBOL(<msg>).
+    IF <msg> IS ASSIGNED.
+      "Alimenta os campos da mensagem
+      <msg>-msgty     = 'E'.
+      <msg>-msgid     = iv_clsmsg.
+      <msg>-msgno     = iv_number.
+      <msg>-msgv1     = vl_msg1.
+      <msg>-msgv2     = vl_msg2.
+      <msg>-msgv3     = vl_msg3.
+      <msg>-msgv4     = vl_msg4.
+    ENDIF.
+  ENDMETHOD.
+
+
+* <SIGNATURE>---------------------------------------------------------------------------------------+
+* | Static Public Method ZCL_UTILITIES=>ENVIAR_EMAIL
+* +-------------------------------------------------------------------------------------------------+
+* | [--->] IV_REMETENTE_UNAME             TYPE        SY-UNAME(optional)
+* | [--->] IV_REMETENTE                   TYPE        ADR6-SMTP_ADDR(optional)
+* | [--->] IV_ASSUNTO                     TYPE        SO_OBJ_DES
+* | [--->] IT_CONTEUDO                    TYPE        BCSY_TEXT
+* | [--->] IT_DESTINATARIOS               TYPE        BCSY_SMTPA(optional)
+* | [--->] IT_DESTINATARIOS_CC            TYPE        BCSY_SMTPA(optional)
+* | [--->] IR_UNAME_DESTINATARIOS         TYPE        TR_UNAME(optional)
+* | [--->] IR_UNAME_COPIA                 TYPE        TR_UNAME(optional)
+* | [--->] IV_COMMIT                      TYPE        BOOLEAN(optional)
+* | [--->] IV_TIPO                        TYPE        ANY(optional)
+* | [!CX!] CX_IDM_ERROR
+* +--------------------------------------------------------------------------------------</SIGNATURE>
+  METHOD enviar_email.
+    DATA:
+      ol_email           TYPE REF TO cl_bcs,
+      ol_corpo_email     TYPE REF TO cl_document_bcs,
+      ol_remetente       TYPE REF TO cl_cam_address_bcs,
+      ol_remetente_u     TYPE REF TO cl_sapuser_bcs,
+      ol_destinatario    TYPE REF TO cl_cam_address_bcs,
+      ol_reply_dest      TYPE REF TO cl_cam_address_bcs,
+      ol_destinatario_u  TYPE REF TO cl_sapuser_bcs,
+      ol_reply_u         TYPE REF TO cl_sapuser_bcs,
+      ol_cx_bcs          TYPE REF TO cx_bcs,
+      ol_cx_send_req_bcs TYPE REF TO cx_send_req_bcs.
+
+    DATA wl_message      TYPE bapiret2.
+
+    DATA: vl_email_enviado TYPE os_boolean,
+          vl_tipo          TYPE so_obj_tp.
+
+    vl_tipo = iv_tipo.
+    IF vl_tipo IS INITIAL.
+      vl_tipo = 'RAW'.
+    ENDIF.
+
+    TRY.
+*       " Cria o e-mail
+        ol_email = cl_bcs=>create_persistent( ).
+
+*       " Cria o corpo do e-mail
+        ol_corpo_email = cl_document_bcs=>create_document(
+                        i_type    = vl_tipo
+                        i_text    = it_conteudo
+                        i_subject = iv_assunto ).
+
+*       " Vincula o corpo do e-mail ao e-mail.
+        ol_email->set_document( ol_corpo_email ).
+
+*       " Determina o remetente do e-mail.
+        IF iv_remetente IS NOT INITIAL.
+          ol_remetente = cl_cam_address_bcs=>create_internet_address( iv_remetente ).
+          ol_email->set_sender( i_sender = ol_remetente ).
+        ELSE.
+          DATA vl_uname TYPE sy-uname.
+          IF iv_remetente_uname IS NOT INITIAL.
+            vl_uname = iv_remetente_uname.
+          ELSE.
+            vl_uname = sy-uname.
+          ENDIF.
+
+          ol_remetente_u = cl_sapuser_bcs=>create( vl_uname ).
+          ol_email->set_sender( i_sender = ol_remetente_u ).
+        ENDIF.
+
+**********************************************************************
+*       " Gera destinatários de email através do endereço de email
+**********************************************************************
+        LOOP AT it_destinatarios INTO DATA(wl_destinatarios).
+          FREE: ol_destinatario.
+
+          IF wl_destinatarios IS NOT INITIAL.
+            ol_destinatario = cl_cam_address_bcs=>create_internet_address( wl_destinatarios ).
+            ol_email->add_recipient(
+              EXPORTING
+                i_recipient = ol_destinatario
+                i_express   = 'X' ) .
+          ENDIF.
+        ENDLOOP.
+
+**********************************************************************
+*       " Gera emails em cópia pelo endereço de email
+**********************************************************************
+        LOOP AT it_destinatarios_cc INTO DATA(wl_destinatarios_cc).
+          FREE: ol_reply_dest.
+
+          IF wl_destinatarios_cc IS NOT INITIAL.
+            ol_reply_dest = cl_cam_address_bcs=>create_internet_address( wl_destinatarios_cc ).
+
+            ol_email->set_reply_to( i_reply_to = ol_reply_dest ).
+          ENDIF.
+        ENDLOOP.
+
+**********************************************************************
+*       " Gera destinatários de email através do SY-UNAME.
+**********************************************************************
+        LOOP AT ir_uname_destinatarios INTO DATA(wl_uname_destinatarios).
+          FREE: ol_destinatario_u.
+
+          IF wl_uname_destinatarios-low IS NOT INITIAL.
+            ol_destinatario_u = cl_sapuser_bcs=>create( wl_uname_destinatarios-low ).
+
+            ol_email->add_recipient(
+              EXPORTING
+                i_recipient = ol_destinatario_u
+                i_express   = 'X' ).
+          ENDIF.
+        ENDLOOP.
+
+**********************************************************************
+*       " Gera emails em cópia pelo SY_UNAME
+**********************************************************************
+        LOOP AT ir_uname_copia INTO DATA(wl_copia_para).
+          FREE: ol_reply_u.
+
+          IF wl_copia_para-low IS NOT INITIAL.
+            ol_reply_u = cl_sapuser_bcs=>create( wl_copia_para-low ).
+
+            ol_email->set_reply_to( i_reply_to = ol_reply_u ).
+          ENDIF.
+        ENDLOOP.
+
+*       " Realiza o envio do e-mail
+        vl_email_enviado = ol_email->send( ).
+
+*       " Em caso de sucesso, conclui o envio - Deve ser executado fora do método.
+        IF NOT iv_commit IS INITIAL.
+          COMMIT WORK.
+        ENDIF.
+
+      CATCH cx_bcs INTO ol_cx_bcs.
+        wl_message-id         = ol_cx_bcs->msgid.
+        wl_message-type       = ol_cx_bcs->msgty.
+        wl_message-number     = ol_cx_bcs->msgno.
+        wl_message-message_v1 = ol_cx_bcs->msgv1.
+        wl_message-message_v2 = ol_cx_bcs->msgv2.
+        wl_message-message_v3 = ol_cx_bcs->msgv3.
+        wl_message-message_v4 = ol_cx_bcs->msgv4.
+        RAISE EXCEPTION TYPE cx_idm_error EXPORTING message = wl_message.
+*      CATCH cx_send_req_bcs INTO ol_cx_send_req_bcs.
+    ENDTRY.
+  ENDMETHOD.
+
+
+* <SIGNATURE>---------------------------------------------------------------------------------------+
+* | Static Public Method ZCL_UTILITIES=>DIA_UTIL_MES
+* +-------------------------------------------------------------------------------------------------+
+* | [--->] IV_MES                         TYPE        AB_MONAT
+* | [--->] IV_ANO                         TYPE        GJAHR
+* | [--->] IV_PERIODO_DIA                 TYPE        NUMC2
+* | [<---] ET_DIAS_UTEIS                  TYPE        TT_RKE_DAT
+* | [<-()] RV_DATA                        TYPE        SY-DATUM
+* | [!CX!] CX_IDM_ERROR
+* +--------------------------------------------------------------------------------------</SIGNATURE>
+  METHOD dia_util_mes.
+    DATA:
+      vl_data_ini TYPE sy-datum,
+      vl_data_fim TYPE sy-datum.
+
+    vl_data_ini = |{ iv_ano }{ iv_mes }01|.
+    CALL FUNCTION 'RP_LAST_DAY_OF_MONTHS'
+      EXPORTING
+        day_in            = vl_data_ini
+      IMPORTING
+        last_day_of_month = vl_data_fim
+      EXCEPTIONS
+        day_in_no_date    = 1
+        OTHERS            = 2.
+    IF sy-subrc <> 0.
+      RAISE EXCEPTION TYPE cx_idm_error
+        EXPORTING
+          message = VALUE #(
+              id          = sy-msgid
+              number      = sy-msgno
+              type        = sy-msgty
+              message_v1  = sy-msgv1
+              message_v2  = sy-msgv2
+              message_v3  = sy-msgv3
+              message_v4  = sy-msgv4
+          ).
+    ENDIF.
+
+*   " Encontra todos os dias úteis do mês.
+    CALL FUNCTION 'RKE_SELECT_FACTDAYS_FOR_PERIOD'
+      EXPORTING
+        i_datab               = vl_data_ini
+        i_datbi               = vl_data_fim
+        i_factid              = 'BR'
+      TABLES
+        eth_dats              = et_dias_uteis
+      EXCEPTIONS
+        date_conversion_error = 1
+        OTHERS                = 2.
+    IF sy-subrc <> 0.
+      RAISE EXCEPTION TYPE cx_idm_error
+        EXPORTING
+          message = VALUE #(
+              id          = sy-msgid
+              number      = sy-msgno
+              type        = sy-msgty
+              message_v1  = sy-msgv1
+              message_v2  = sy-msgv2
+              message_v3  = sy-msgv3
+              message_v4  = sy-msgv4
+          ).
+    ENDIF.
+
+    IF et_dias_uteis[] IS NOT INITIAL.
+      READ TABLE et_dias_uteis INDEX iv_periodo_dia INTO DATA(wl_rke_dat).
+      rv_data = wl_rke_dat-periodat.
+    ENDIF.
+  ENDMETHOD.
+
+
+* <SIGNATURE>---------------------------------------------------------------------------------------+
+* | Static Public Method ZCL_UTILITIES=>CONVERTER_MOEDA
+* +-------------------------------------------------------------------------------------------------+
+* | [--->] IV_FCURR                       TYPE        TCURR-FCURR
+* | [--->] IV_TCURR                       TYPE        TCURR-TCURR
+* | [--->] IV_GDATU                       TYPE        SY-DATUM
+* | [<-()] RV_UKURS                       TYPE        TCURR-UKURS
+* | [!CX!] CX_IDM_ERROR
+* +--------------------------------------------------------------------------------------</SIGNATURE>
+  METHOD converter_moeda.
+    DATA:
+      vl_dt_10   TYPE char10,
+      vl_a_gdatu TYPE tcurr-gdatu.
+
+    vl_dt_10 = |{ iv_gdatu DATE = USER }|.
+
+    CALL FUNCTION 'CONVERSION_EXIT_INVDT_INPUT'
+      EXPORTING
+        input  = vl_dt_10
+      IMPORTING
+        output = vl_a_gdatu.
+
+    SELECT SINGLE ukurs
+      FROM tcurr
+      WHERE fcurr EQ @iv_fcurr
+        AND tcurr EQ @iv_tcurr
+        AND gdatu EQ @vl_a_gdatu
+    INTO @rv_ukurs .
+
+    IF rv_ukurs IS INITIAL.
+      DATA:
+        vl_b_dtin  TYPE sy-datum,
+        vl_b_gdatu TYPE tcurr-gdatu.
+
+      vl_b_dtin = iv_gdatu - 30.
+      vl_dt_10 = |{ vl_b_dtin DATE = USER }|.
+
+      CALL FUNCTION 'CONVERSION_EXIT_INVDT_INPUT'
+        EXPORTING
+          input  = vl_dt_10
+        IMPORTING
+          output = vl_b_gdatu.
+
+      SELECT ukurs, gdatu
+        FROM tcurr
+        WHERE fcurr EQ @iv_fcurr
+          AND tcurr EQ @iv_tcurr
+          AND gdatu GT @vl_a_gdatu " DATA MAIOR - ESSE PARAMETRO É INVERTIDO
+          AND gdatu LT @vl_b_gdatu " DATA MENOR - ESSE PARAMETRO É INVERTIDO
+      INTO TABLE @DATA(tl_tcur).
+
+      SORT tl_tcur BY gdatu ASCENDING. " A ordenação é o inverso do padrão. Pega a maior data.
+      IF tl_tcur[] IS NOT INITIAL.
+        rv_ukurs = tl_tcur[ 1 ]-ukurs.
+      ENDIF.
+    ENDIF.
+
+    IF rv_ukurs IS INITIAL.
+      IF 1 = 2. MESSAGE s005(zfi). ENDIF. "
+      RAISE EXCEPTION TYPE cx_idm_error
+        EXPORTING
+          message = VALUE #(
+            type = 'E' id = '/FHG/UTIL' number = 000
+            message_v1 = 'Nenhuma conversão de moeda foi encontrada no período.'
+            message_v2 = iv_fcurr
+            message_v3 = iv_tcurr
+            message_v4 = |{ iv_gdatu DATE = USER }|
+
+          ).
+
+    ENDIF.
+  ENDMETHOD.
+
+
+* <SIGNATURE>---------------------------------------------------------------------------------------+
+* | Static Public Method ZCL_UTILITIES=>CHECK_PRODUCTIVE_SYSTEM
+* +-------------------------------------------------------------------------------------------------+
+* | [<-()] RV_PROD                        TYPE        FLAG
+* +--------------------------------------------------------------------------------------</SIGNATURE>
+  METHOD check_productive_system.
+    DATA: lv_role TYPE t000-cccategory.
+    CALL FUNCTION 'TR_SYS_PARAMS'
+      IMPORTING
+        system_client_role = lv_role
+      EXCEPTIONS
+        no_systemname      = 1
+        no_systemtype      = 2
+        OTHERS             = 3.
+    IF sy-subrc EQ 0.
+      CHECK lv_role = 'P'.
+      rv_prod = abap_true.
+    ENDIF.
+  ENDMETHOD.
+
+
+* <SIGNATURE>---------------------------------------------------------------------------------------+
+* | Static Public Method ZCL_UTILITIES=>BUSCAR_DIRETORIO_SERVIDOR
+* +-------------------------------------------------------------------------------------------------+
+* | [<-()] RV_ENDERECO                    TYPE        STRING
+* +--------------------------------------------------------------------------------------</SIGNATURE>
+  METHOD buscar_diretorio_servidor.
+    CALL FUNCTION '/SAPDMC/LSM_F4_SERVER_FILE'
+      EXPORTING
+        directory        = '/usr/sap/'
+        filemask         = ''
+      IMPORTING
+        serverfile       = rv_endereco
+      EXCEPTIONS
+        canceled_by_user = 1
+        OTHERS           = 2.
+
+  ENDMETHOD.
+
+
+* <SIGNATURE>---------------------------------------------------------------------------------------+
+* | Static Public Method ZCL_UTILITIES=>BUSCAR_DIRETORIO_LOCAL
+* +-------------------------------------------------------------------------------------------------+
+* | [<-()] RV_ENDERECO                    TYPE        STRING
+* +--------------------------------------------------------------------------------------</SIGNATURE>
+  METHOD buscar_diretorio_local.
+    cl_gui_frontend_services=>directory_browse( CHANGING selected_folder = rv_endereco ).
+  ENDMETHOD.
+
+
+* <SIGNATURE>---------------------------------------------------------------------------------------+
+* | Static Public Method ZCL_UTILITIES=>ARQUIVO_SERVIDOR_ITAB
+* +-------------------------------------------------------------------------------------------------+
+* | [--->] IV_CAMINHO                     TYPE        STRING
+* | [<---] ET_ARQUIVO                     TYPE        TT_ARQUIVO
+* | [!CX!] CX_IDM_ERROR
+* +--------------------------------------------------------------------------------------</SIGNATURE>
+  METHOD arquivo_servidor_itab.
+    DATA: vl_endereco TYPE dirname_al11,
+          vl_linha    TYPE string.
+
+    vl_endereco = iv_caminho.
+
+    "Abre o documento do servidor
+    OPEN DATASET vl_endereco FOR INPUT IN TEXT MODE ENCODING NON-UNICODE
+                                                    IGNORING CONVERSION ERRORS.
+
+    IF sy-subrc IS NOT INITIAL.
+
+      RAISE EXCEPTION TYPE cx_idm_error
+        EXPORTING
+          message = VALUE #(
+            type = 'E' id = '/FHG/UTIL' number = 000
+            message_v1 = 'MSG: Erro na Gravação do Arquivo'
+          ).
+
+    ENDIF.
+
+    DO.
+
+      "Le arquivo linha a linha
+      READ DATASET vl_endereco INTO vl_linha.
+
+      IF sy-subrc IS NOT INITIAL.
+        EXIT.
+      ENDIF.
+
+      APPEND vl_linha TO et_arquivo.
+
+    ENDDO.
+
+    "Fecha arquivo
+    CLOSE DATASET vl_endereco.
+  ENDMETHOD.
+
+
+* <SIGNATURE>---------------------------------------------------------------------------------------+
+* | Static Public Method ZCL_UTILITIES=>ARQUIVO_PC_ITAB
+* +-------------------------------------------------------------------------------------------------+
+* | [--->] IV_CAMINHO                     TYPE        STRING
+* | [--->] IV_CODEPAGE                    TYPE        ABAP_ENCODING (default =SPACE)
+* | [<---] ET_ARQUIVO                     TYPE        TT_ARQUIVO
+* | [!CX!] CX_IDM_ERROR
+* +--------------------------------------------------------------------------------------</SIGNATURE>
+  METHOD arquivo_pc_itab.
+
+    IF iv_caminho IS NOT INITIAL.
+      cl_gui_frontend_services=>gui_upload(
+        EXPORTING
+          filename                = iv_caminho
+          codepage                = iv_codepage
+        CHANGING
+          data_tab                = et_arquivo
+        EXCEPTIONS
+          file_open_error         = 1
+          file_read_error         = 2
+          no_batch                = 3
+          gui_refuse_filetransfer = 4
+          invalid_type            = 5
+          no_authority            = 6
+          unknown_error           = 7
+          bad_data_format         = 8
+          header_not_allowed      = 9
+          separator_not_allowed   = 10
+          header_too_long         = 11
+          unknown_dp_error        = 12
+          access_denied           = 13
+          dp_out_of_memory        = 14
+          disk_full               = 15
+          dp_timeout              = 16
+          not_supported_by_gui    = 17
+          error_no_gui            = 18 ).
+
+      CHECK sy-subrc IS NOT INITIAL.
+
+      RAISE EXCEPTION TYPE cx_idm_error
+        EXPORTING
+          message = VALUE #(
+            type = 'E' id = '/FHG/UTIL' number = 000
+            message_v1 = 'MSG: Erro na Gravação do Arquivo'
+          ).
+    ENDIF.
+  ENDMETHOD.
+
+
+* <SIGNATURE>---------------------------------------------------------------------------------------+
+* | Static Public Method ZCL_UTILITIES=>ARQUIVO_ITAB_SERVIDOR
+* +-------------------------------------------------------------------------------------------------+
+* | [--->] IV_CAMINHO                     TYPE        STRING
+* | [--->] IV_NOME                        TYPE        STRING
+* | [--->] IT_ARQUIVO                     TYPE        TT_ARQUIVO
+* | [!CX!] CX_IDM_ERROR
+* +--------------------------------------------------------------------------------------</SIGNATURE>
+  METHOD arquivo_itab_servidor.
+
+    DATA: vl_endereco TYPE dirname_al11.
+
+**********************************************************************
+*   " Verifica se o ultimo caractere do local de destino é '/'
+**********************************************************************
+    DATA(vl_tamanho) = strlen( iv_caminho ) - 1.
+    DATA(vl_ultimo_char) = iv_caminho+vl_tamanho(1).
+    IF vl_ultimo_char NE '/'.
+      DATA(vl_separador) = '/'.
+    ENDIF.
+
+    CONCATENATE iv_caminho vl_separador iv_nome INTO vl_endereco.
+
+    "Cria o documento do servidor
+    OPEN DATASET vl_endereco FOR OUTPUT IN TEXT MODE ENCODING DEFAULT.
+
+    IF sy-subrc IS NOT INITIAL.
+
+      RAISE EXCEPTION TYPE cx_idm_error
+        EXPORTING
+          message = VALUE #(
+            type = 'E' id = '/FHG/UTIL' number = 000
+            message_v1 = 'MSG: Erro na Gravação do Arquivo'
+          ).
+
+    ENDIF.
+
+    LOOP AT it_arquivo ASSIGNING FIELD-SYMBOL(<fs_arquivo>).
+      TRANSFER <fs_arquivo> TO vl_endereco.
+    ENDLOOP.
+
+    "Fecha arquivo
+    CLOSE DATASET vl_endereco.
+  ENDMETHOD.
+
+
+* <SIGNATURE>---------------------------------------------------------------------------------------+
+* | Static Public Method ZCL_UTILITIES=>ARQUIVO_ITAB_PC
+* +-------------------------------------------------------------------------------------------------+
+* | [--->] IV_CAMINHO                     TYPE        STRING
+* | [--->] IV_NOME                        TYPE        STRING
+* | [--->] IT_ARQUIVO                     TYPE        TT_ARQUIVO
+* | [!CX!] CX_IDM_ERROR
+* +--------------------------------------------------------------------------------------</SIGNATURE>
+  METHOD arquivo_itab_pc.
+    DATA:
+      vl_end_compl TYPE string,
+      tl_arquivo   TYPE zcl_utilities=>tt_arquivo.
+
+**********************************************************************
+*   " Verifica se o ultimo caractere do local de destino é '\'
+**********************************************************************
+    DATA(vl_tamanho) = strlen( iv_caminho ) - 1.
+    DATA(vl_ultimo_char) = iv_caminho+vl_tamanho(1).
+    IF vl_ultimo_char NE '\'.
+      DATA(vl_separador) = '\'.
+    ENDIF.
+
+    CONCATENATE iv_caminho vl_separador iv_nome INTO vl_end_compl.
+    tl_arquivo[] = it_arquivo[].
+
+    cl_gui_frontend_services=>gui_download( EXPORTING   filename              = vl_end_compl
+*                                                        write_field_separator = tabulado
+                                            CHANGING    data_tab              = tl_arquivo
+                                            EXCEPTIONS  OTHERS                = 1 ).
+
+    CHECK sy-subrc IS NOT INITIAL.
+
+    RAISE EXCEPTION TYPE cx_idm_error
+      EXPORTING
+        message = VALUE #(
+          type = 'E' id = '/FHG/UTIL' number = 000
+          message_v1 = 'MSG: Erro na Gravação do Arquivo'
+        ).
   ENDMETHOD.
 ENDCLASS.
