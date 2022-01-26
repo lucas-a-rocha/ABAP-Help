@@ -1,0 +1,648 @@
+*&---------------------------------------------------------------------*
+*& Report  ZENHANCEMENT_FINDER
+*&
+*&---------------------------------------------------------------------*
+*& Report to display the transaction enhancements
+*& 
+*& SAP Code Exchange
+*& Project.. : Enhancement Finder
+*& URL...... : https://cw.sdn.sap.com/cw/groups/enhancement-finder
+*&---------------------------------------------------------------------*
+REPORT  zenhancement_finder.
+
+*&---------------------------------------------------------------------*
+*& Types
+*&---------------------------------------------------------------------*
+TYPES:BEGIN OF ty_output,
+        object        TYPE trobjtype,
+        obj_name      TYPE sobj_name,
+        obj_desc      TYPE string,
+        devclass      TYPE devclass,
+        fname         TYPE string,    " Function Exit name
+        fdesc         TYPE string,    " Function Exit description
+        ftype         TYPE string,    " Function Exit Type Technical value
+        ftype_desc    TYPE string,    " Function Exit Type Description
+        active        TYPE string,
+        active_output TYPE icon_d,
+        impl          TYPE string,
+        impl_output   TYPE icon_d,
+        impl_name     TYPE string,
+        impl_comment  TYPE string,
+      END OF ty_output.
+
+TYPES: BEGIN OF s_function,
+         fname        TYPE mod0-funcname,
+         ftext        TYPE tftit-stext,
+         impl,
+         active,
+         example,
+       END OF s_function.
+TYPES: BEGIN OF s_cua,
+         p_name       TYPE mod0-cuaprog,
+         fcode        TYPE gui_code,
+         impl,
+         active,
+       END OF s_cua.
+TYPES: BEGIN OF s_screen,
+         g_name       TYPE mod0-gdynprog,
+         g_dynnr      TYPE mod0-gdynnr,
+         bername      TYPE mod0-bername,
+         c_name       TYPE mod0-cdynprog,
+         c_dynnr      TYPE mod0-cdynnr,
+         text         TYPE mod0-stext,
+         impl,
+         active,
+       END OF s_screen.
+
+TYPES: BEGIN OF s_table,
+         tname TYPE itabname,
+         impl,
+         active,
+       END OF s_table.
+
+TYPES: BEGIN OF exit_members,
+         name         TYPE modname,
+         text         TYPE mod0-memtext,
+         functions    TYPE s_function OCCURS 0,
+         fcodes       TYPE s_cua      OCCURS 0,
+         screens      TYPE s_screen   OCCURS 0,
+         tables       TYPE s_table    OCCURS 0,
+         status       TYPE modattr-status,
+       END OF exit_members.
+
+TYPES: rcode(5).
+
+*&---------------------------------------------------------------------*
+*& DATA
+*&---------------------------------------------------------------------*
+DATA: gv_impl_status_text TYPE string,
+      gv_impl_name        TYPE exit_imp,
+      gv_programid        TYPE program_id,
+
+      gs_tadir            TYPE tadir,
+      gt_tadir            TYPE TABLE OF tadir,
+      gv_devclass         TYPE devclass.
+
+DATA: gs_enlfdir          TYPE enlfdir,
+      gs_trdir            TYPE trdir,
+      gs_tfdir            TYPE tfdir,
+      gs_tstct            TYPE tstct.
+
+DATA: gs_output           TYPE ty_output,
+      gt_output           TYPE TABLE OF ty_output.
+
+DATA: gs_exit             TYPE exit_members,
+      gs_exit_name        TYPE modname,
+      gv_rcode(5)         TYPE c.
+
+DATA: gs_sxc_exit         TYPE sxc_exit,
+      gt_sxc_exit         TYPE TABLE OF sxc_exit.
+
+DATA: lv_enh_cnt          TYPE i,
+      lv_badi_cnt         TYPE i,
+      lv_es_cnt           TYPE i.
+
+DATA: cursorfield         TYPE string.
+
+FIELD-SYMBOLS:  <fs_output>     TYPE ty_output,
+                <fs_functions>  TYPE s_function,
+                <fs_tadir>      TYPE tadir,
+                <fs_sxc_exit>   TYPE sxc_exit.
+
+*&---------------------------------------------------------------------*
+*& Selection screen
+*&---------------------------------------------------------------------*
+SELECTION-SCREEN BEGIN OF BLOCK block1.
+PARAMETERS :  p_tcode   TYPE tcode, " Transaction code
+              p_pgmna   TYPE pgmna. " Program ID
+SELECTION-SCREEN END OF BLOCK block1.
+
+*&---------------------------------------------------------------------*
+*& START-OF-SELECTION
+*&---------------------------------------------------------------------*
+START-OF-SELECTION.
+
+  " Retrieve program id from transaction code
+  IF p_tcode IS NOT INITIAL.
+    SELECT SINGLE pgmna FROM tstc
+                    INTO gv_programid
+                   WHERE tcode EQ p_tcode.
+  ELSEIF p_pgmna IS NOT INITIAL.
+    gv_programid = p_pgmna.
+  ENDIF.
+
+  " Retrieve development class
+  SELECT SINGLE * FROM tadir
+                  INTO gs_tadir
+                 WHERE pgmid    = 'R3TR'
+                   AND object   = 'PROG'    " Program
+                   AND obj_name = gv_programid.
+  IF sy-subrc NE 0.
+    SELECT SINGLE * FROM tadir
+                 INTO gs_tadir
+                WHERE pgmid    = 'R3TR'
+                  AND object   = 'TRAN'     " Transaction
+                  AND obj_name = p_tcode.
+  ENDIF.
+  gv_devclass = gs_tadir-devclass.
+
+  " Retrieve all enhancements for program
+  SELECT * FROM tadir
+     INTO TABLE gt_tadir
+          WHERE pgmid = 'R3TR'
+            AND object IN ('SMOD',  " User Exit
+                           'SXSD',  " BADI
+                           'ENHO',  " Enhancement Implementation
+                           'ENHS')  " Enhancement Spot
+            AND devclass = gv_devclass.
+
+  " Retrieve transaction description
+  SELECT SINGLE * FROM tstct
+                  INTO gs_tstct
+                 WHERE sprsl EQ sy-langu
+                   AND tcode EQ p_tcode.
+
+  PERFORM write_header.
+
+*&---------------------------------------------------------------------*
+*& User Exits
+*&---------------------------------------------------------------------*
+  CLEAR lv_enh_cnt.
+  LOOP AT gt_tadir ASSIGNING <fs_tadir> WHERE object EQ 'SMOD'.
+    MOVE-CORRESPONDING <fs_tadir> TO gs_output.
+
+    " Get information
+    gs_exit_name = gs_output-obj_name.
+
+    " Retrieve CMOD implementation project
+    SELECT SINGLE name FROM modact
+                       INTO gs_output-impl_name
+                      WHERE member = gs_output-obj_name.
+
+    " Enhancement description
+    SELECT SINGLE modtext INTO gs_output-obj_desc
+                          FROM modsapt
+                         WHERE sprsl = sy-langu
+                           AND name = gs_output-obj_name.
+
+    FORMAT COLOR COL_HEADING INTENSIFIED ON.
+    WRITE:/1 sy-vline,
+    2 gs_output-obj_name HOTSPOT ON,
+    42 gs_output-obj_desc,
+    140 sy-vline.
+    FORMAT COLOR  COL_NORMAL  INTENSIFIED ON.
+
+    PERFORM get_exit_members(saplsmod) USING gs_exit_name
+                                    CHANGING gs_exit
+                                             gv_rcode.
+
+    LOOP AT gs_exit-functions ASSIGNING <fs_functions>.
+      gs_output-impl   = <fs_functions>-impl.
+      gs_output-active = <fs_functions>-active.
+      gs_output-fname  = <fs_functions>-fname.
+
+      " Retrieve Function Exit type technical value
+      SELECT SINGLE typ FROM modsap
+                        INTO gs_output-ftype
+                       WHERE member = gs_output-fname.
+
+      " Retrieve description for Function Exit type
+      SELECT SINGLE ddtext FROM dd07t
+                           INTO gs_output-ftype_desc
+                          WHERE ddlanguage = sy-langu
+                            AND domname = 'MODTYP'
+                            AND domvalue_l = gs_output-ftype.
+
+      " Retrieve Function Exit description
+      PERFORM get_function_desc USING gs_output-fname
+                                      gs_output-ftype
+                             CHANGING gs_output-fdesc.
+
+      " Prepare output icons
+      IF gs_output-impl EQ 'X'.
+        SELECT SINGLE id FROM icon
+                         INTO gs_output-impl_output
+                        WHERE name = 'ICON_CHECKED'.
+      ELSE.
+        SELECT SINGLE id FROM icon
+                         INTO gs_output-impl_output
+                        WHERE name = 'ICON_INCOMPLETE'.
+      ENDIF.
+      IF gs_output-active EQ 'X'.
+        SELECT SINGLE id FROM icon
+                         INTO gs_output-active_output
+                        WHERE name = 'ICON_CHECKED'.
+      ELSE.
+        SELECT SINGLE id FROM icon
+                         INTO gs_output-active_output
+                        WHERE name = 'ICON_INCOMPLETE'.
+      ENDIF.
+
+      WRITE:/1 sy-vline,
+      2 gs_output-fname HOTSPOT ON,
+      42 gs_output-fdesc,
+      110 gs_output-impl_output AS ICON,
+      115 gs_output-active_output AS ICON,
+      120 gs_output-impl_name HOTSPOT ON,
+      140 sy-vline.
+
+      APPEND gs_output TO gt_output.
+    ENDLOOP.
+    lv_enh_cnt = lv_enh_cnt + 1.
+  ENDLOOP.
+  WRITE:/(140) sy-uline.
+  IF lv_enh_cnt > 0.
+    FORMAT COLOR COL_TOTAL INTENSIFIED ON.
+  ELSE.
+    FORMAT COLOR COL_NEGATIVE INTENSIFIED ON.
+  ENDIF.
+  WRITE:/(140) sy-uline.
+  WRITE:/1 sy-vline,
+        2 'No of Enhancements:' ,
+        20 lv_enh_cnt,
+        140 sy-vline.
+  WRITE:/(140) sy-uline.
+
+*&---------------------------------------------------------------------*
+*& BADIs
+*&---------------------------------------------------------------------*
+  FORMAT COLOR COL_HEADING INTENSIFIED ON.
+  WRITE:/(140) sy-uline.
+  WRITE:/1 sy-vline,
+      2 'BADI',
+      41 sy-vline ,
+      42 'Description',
+      140 sy-vline.
+  WRITE:/(140) sy-uline.
+
+  CLEAR lv_badi_cnt.
+  LOOP AT gt_tadir ASSIGNING <fs_tadir> WHERE object EQ 'SXSD'.
+    CLEAR gs_output.
+    MOVE-CORRESPONDING <fs_tadir> TO gs_output.
+
+    " Implementation program
+    SELECT * FROM sxc_exit INTO TABLE gt_sxc_exit
+      WHERE exit_name = gs_output-obj_name.
+
+    SELECT SINGLE text INTO gs_output-obj_desc
+    FROM sxs_attrt
+    WHERE sprsl = sy-langu
+    AND exit_name = gs_output-obj_name.
+
+    FORMAT COLOR COL_HEADING INTENSIFIED ON.
+    WRITE:/1 sy-vline,
+        2 gs_output-obj_name HOTSPOT ON,
+        42 gs_output-obj_desc,
+        140 sy-vline.
+
+    LOOP AT gt_sxc_exit ASSIGNING <fs_sxc_exit>.
+      " Implementation text
+      CLEAR gs_output-impl_comment.
+
+      PERFORM set_impl_status_text USING <fs_sxc_exit>-imp_name
+                                          gs_output-obj_name
+                                CHANGING gs_output-impl_comment.
+
+      gs_output-impl_name = <fs_sxc_exit>-imp_name.
+      FORMAT COLOR COL_NORMAL INTENSIFIED ON.
+      WRITE: /1 sy-vline,
+              2 <fs_sxc_exit>-imp_name,
+              42 gs_output-impl_comment,
+              140 sy-vline.
+      APPEND gs_output TO gt_output.
+    ENDLOOP.
+    IF sy-subrc NE 0.
+      APPEND gs_output TO gt_output.
+    ENDIF.
+
+    lv_badi_cnt = lv_badi_cnt + 1.
+  ENDLOOP.
+
+    WRITE:/(140) sy-uline.
+  IF lv_badi_cnt > 0.
+    FORMAT COLOR COL_TOTAL INTENSIFIED ON.
+  ELSE.
+    FORMAT COLOR COL_NEGATIVE INTENSIFIED ON.
+  ENDIF.
+  WRITE:/(140) sy-uline.
+  WRITE:/1 sy-vline,
+        2'No of BADIs:',
+        20 lv_badi_cnt,
+        140 sy-vline.
+  WRITE:/(140) sy-uline.
+
+
+*&---------------------------------------------------------------------*
+*& Enhancement Spots
+*&---------------------------------------------------------------------*
+  FORMAT COLOR COL_HEADING INTENSIFIED ON.
+  WRITE:/(140) sy-uline.
+  WRITE:/1 sy-vline,
+      2 'Enhancement Spots',
+      41 sy-vline ,
+      42 'Description',
+      140 sy-vline.
+  WRITE:/(140) sy-uline.
+
+  CLEAR lv_es_cnt.
+  LOOP AT gt_tadir ASSIGNING <fs_tadir> WHERE object EQ 'ENHS'.
+    FORMAT COLOR COL_HEADING INTENSIFIED ON.
+    WRITE:/1 sy-vline,
+        2 <fs_tadir>-obj_name,
+        140 sy-vline.
+
+    lv_es_cnt = lv_es_cnt + 1.
+  ENDLOOP.
+
+  WRITE:/(140) sy-uline.
+  IF lv_badi_cnt > 0.
+    FORMAT COLOR COL_TOTAL INTENSIFIED ON.
+  ELSE.
+    FORMAT COLOR COL_NEGATIVE INTENSIFIED ON.
+  ENDIF.
+  WRITE:/(140) sy-uline.
+  WRITE:/1 sy-vline,
+        2'No of Enh. Spots:',
+        20 lv_es_cnt,
+        140 sy-vline.
+  WRITE:/(140) sy-uline.
+
+*&---------------------------------------------------------------------*
+*& AT LINE-SELECTION
+*&---------------------------------------------------------------------*
+AT LINE-SELECTION.
+
+  CLEAR gs_output.
+
+  GET CURSOR FIELD cursorfield.
+  IF cursorfield EQ 'GS_OUTPUT-OBJ_NAME'.
+    READ TABLE gt_output INTO gs_output WITH KEY obj_name = sy-lisel+1(30).
+
+    CASE gs_output-object.
+      WHEN 'SMOD'.
+        SET PARAMETER ID 'MON' FIELD sy-lisel+1(10).
+        CALL TRANSACTION 'SMOD' AND SKIP FIRST SCREEN.
+      WHEN 'SXSD'.
+        SET PARAMETER ID 'EXN' FIELD sy-lisel+1(30).
+        CALL TRANSACTION 'SE18' AND SKIP FIRST SCREEN.
+    ENDCASE.
+
+  ELSEIF cursorfield EQ 'GS_OUTPUT-IMPL_NAME'.
+    SET PARAMETER ID 'MON' FIELD sy-lisel+119(8).
+    CALL TRANSACTION 'CMOD' AND SKIP FIRST SCREEN.
+  ELSEIF cursorfield EQ 'GS_OUTPUT-FNAME'.
+    PERFORM tool_acces.
+  ENDIF.
+
+*&---------------------------------------------------------------------*
+*& Subroutines
+*&---------------------------------------------------------------------*
+FORM set_impl_status_text USING p_obj_name TYPE exit_imp    "implementation
+                                p_exit_name TYPE sobj_name     " exit
+                       CHANGING p_impl_comment TYPE string.
+* Program SAPLSEXO from transaction SE19
+* Status display for classical badi implementations
+*
+* 1.) Migrated implementation
+*     -> get text from migrated impementation
+*
+* 2.) Not migrated
+* 2.1) Inactive
+*     -> Implementation will not be called
+* 2.2) Active
+*
+* 2.2.1) Definition marked as internal
+*     -> Check TBE11 switch, display correct runtime behavior
+* 2.2.2) Definition not marked as internal
+*     -> Implementation will not be called
+
+  DATA: l_mig_enhname TYPE enhname,
+        l_active      TYPE activity,
+        l_obj_name    TYPE exit_imp.
+
+  l_obj_name = p_obj_name.
+
+  SELECT SINGLE mig_enhname active FROM sxc_attr INTO (l_mig_enhname,l_active) WHERE imp_name = l_obj_name.
+  DATA g_runtime_behavior TYPE string.
+  IF l_mig_enhname IS INITIAL.
+    IF l_active EQ 'X'.
+      PERFORM set_impl_status_active USING p_obj_name
+                                           p_exit_name
+                                  CHANGING p_impl_comment.
+    ELSE.
+      p_impl_comment = 'Implementation is not called'.
+    ENDIF.
+  ELSE.
+    PERFORM set_impl_status_by_enh USING l_mig_enhname l_active
+                                CHANGING p_impl_comment.
+  ENDIF.
+
+ENDFORM.                    " SET_IMPL_STATUS_TEXT
+
+*&---------------------------------------------------------------------*
+*&      Form  set_impl_status_by_enh
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*      -->IM_MIG_ENHNAME  text
+*      -->IM_ACTIVE       text
+*      -->P_IMPL_COMMENT  text
+*----------------------------------------------------------------------*
+FORM set_impl_status_by_enh  USING im_mig_enhname TYPE enhname
+                                   im_active      TYPE activity
+                          CHANGING p_impl_comment TYPE string.
+
+  DATA: l_devclass         TYPE devclass,
+        l_impl_name        TYPE badi_impl_name,
+        l_switch_state     TYPE sfw_switchpos,
+        l_switch_id        TYPE sfw_switch_id,
+        l_switched_off     TYPE boolean,
+        l_activated_in_img TYPE boolean.
+
+* Order of switching: "Switch off" overrides "IMG off" overrides "Active off"
+
+* is the implementation switched off?
+  SELECT SINGLE devclass FROM tadir INTO l_devclass
+    WHERE pgmid    = 'R3TR'                              "vjb
+      AND object   = 'ENHO'
+      AND obj_name = im_mig_enhname.
+
+  l_switch_id = cl_switch=>sw_devclass( p_package = l_devclass p_version = 'A' ).
+
+  IF l_switch_id IS NOT INITIAL.
+    l_switch_state = cl_abap_switch=>get_switch_state(
+    p_switch_id = l_switch_id
+    p_client = sy-mandt ).
+    IF l_switch_state NE 'T'.
+      l_switched_off = 'X'.
+    ENDIF.
+  ENDIF.
+
+  IF l_switched_off EQ 'X'.
+    p_impl_comment = 'Implementation is not called (switch &)'.
+    REPLACE '&' IN p_impl_comment WITH l_switch_id.
+  ELSE.
+*   read customizing
+    TRY.
+        l_impl_name = im_mig_enhname.
+        CALL METHOD cl_enh_enbc_object=>read
+          EXPORTING
+            enhname    = im_mig_enhname
+            badi_impl  = l_impl_name
+          IMPORTING
+            active_img = l_activated_in_img.
+      CATCH cx_enh_not_found.
+    ENDTRY.
+
+    IF l_activated_in_img EQ abap_true.
+      p_impl_comment = 'Implementation is called (activation through IMG)'.
+    ELSEIF im_active EQ abap_true.
+      p_impl_comment = 'Implementation is called'.
+    ELSE.
+      p_impl_comment = 'Implementation is not called'.
+    ENDIF.
+  ENDIF.
+
+ENDFORM.                    " SET_IMPL_STATUS_BY_ENH
+*&---------------------------------------------------------------------*
+*&      Form  WRITE_HEADER
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM write_header.
+  FORMAT COLOR COL_POSITIVE INTENSIFIED OFF.
+  WRITE:/(19) 'Transaction Code - ',
+  20(20) p_tcode,
+  45(95) gs_tstct-ttext.
+  SKIP.
+  FORMAT COLOR COL_HEADING INTENSIFIED ON.
+
+  WRITE:/(140) sy-uline.
+  WRITE:/1 sy-vline,
+      2 'Enhancement and its User Exits',
+      41 sy-vline ,
+      42 'Description',
+      110 'Impl',
+      115 'Act',
+      120 'Impl name',
+      140 sy-vline.
+  WRITE:/(140) sy-uline.
+ENDFORM.                    " WRITE_HEADER
+*&---------------------------------------------------------------------*
+*&      Form  GET_FUNCTION_DESC
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*      -->P_GS_OUTPUT_FNAME  text
+*      -->P_GS_OUTPUT_FTYPE  text
+*      <--P_GS_OUTPUT_FDESC  text
+*----------------------------------------------------------------------*
+FORM get_function_desc  USING    p_gs_output_fname
+                                 p_gs_output_ftype
+                        CHANGING p_gs_output_fdesc.
+
+  DATA: lv_fname TYPE string,
+        lv_ftype TYPE modtyp.
+
+  lv_fname = p_gs_output_fname.
+  lv_ftype = p_gs_output_ftype.
+
+  CALL FUNCTION 'MOD_SAP_MEMBER_TEXT'
+    EXPORTING
+      memname    = lv_fname
+      memtyp     = lv_ftype
+    IMPORTING
+      text       = p_gs_output_fdesc
+    EXCEPTIONS
+      not_found  = 1
+      wrong_name = 2
+      OTHERS     = 3.
+
+ENDFORM.                    " GET_FUNCTION_DESC
+*&---------------------------------------------------------------------*
+*&      Form  TOOL_ACCES
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM tool_acces .
+  CALL FUNCTION 'RS_TOOL_ACCESS'
+    EXPORTING
+      operation           = 'SHOW'
+      object_name         = sy-lisel+1(30)
+      object_type         = 'FUNC'
+      position            = 'PARM'
+      monitor_activation  = 'X'
+    EXCEPTIONS
+      not_executed        = 1
+      invalid_object_type = 2
+      OTHERS              = 3.
+ENDFORM.                    " TOOL_ACCES
+*&---------------------------------------------------------------------*
+*&      Form  set_impl_status_active
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*      -->P_IMPL_NAME     text
+*      -->P_EXIT_NAME     text
+*      -->P_IMPL_COMMENT  text
+*----------------------------------------------------------------------*
+FORM set_impl_status_active USING p_impl_name TYPE exit_imp
+                                  p_exit_name TYPE sobj_name
+                         CHANGING p_impl_comment TYPE string.
+
+  DATA: l_is_released TYPE boolean,
+        l_devclass    TYPE devclass,
+        l_package_hier TYPE pakhierarc,
+        l_ext_alias    TYPE ext_alias,
+        lv_exit_name   TYPE exit_def.
+
+  lv_exit_name = p_exit_name.
+  "SAP Standard already has internal value but function module looks it up if not supplied
+  CALL FUNCTION 'SXE_IMPL_RELEASED_FOR_CUSTOMER'
+    EXPORTING
+      imp_name    = p_impl_name
+      exit_name   = lv_exit_name
+    IMPORTING
+      is_released = l_is_released        
+      "internal   = lv_internal
+      devclass    = l_devclass.
+
+  IF l_is_released EQ 'X'.
+    p_impl_comment = 'Implementation is called'.
+  ELSE.
+*     Determine extension alias of the structure package that belongs to the implementation
+
+*     (1) Determine structure package
+    CALL FUNCTION 'PA_GET_PACKAGE_HIERARCHY'
+      EXPORTING
+        i_client_package           = l_devclass
+        i_server_package           = l_devclass
+      IMPORTING
+        e_client_package_hierarchy = l_package_hier
+      EXCEPTIONS
+        OTHERS                     = 1.
+
+*     (2) Determine name of enterprise extension
+    IF sy-subrc = 0.
+      CALL FUNCTION 'PA_GET_EXTENSION_ALIAS'
+        EXPORTING
+          i_structure_package            = l_package_hier-struc_pack
+        IMPORTING
+          e_extension_alias              = l_ext_alias
+        EXCEPTIONS
+          structure_package_not_existing = 1.
+    ELSE.
+      l_ext_alias = l_devclass. " should not happen!!!
+    ENDIF.
+
+    p_impl_comment = '& is deactivated; implementation is not called'.
+    REPLACE '&' IN p_impl_comment WITH l_ext_alias.
+  ENDIF.
+
+ENDFORM.                    " SET_IMPL_STATUS_ACTIVE
