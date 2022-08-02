@@ -1,0 +1,42 @@
+
+DATA source_list TYPE STANDARD TABLE OF string.
+DATA source_line TYPE string.
+DATA includename TYPE program.
+DATA _classname TYPE seoclsname VALUE 'ZCL_EST_CRED_EXTREMA'.
+
+
+includename = cl_oo_classname_service=>get_pubsec_name( _classname ).
+READ REPORT includename INTO source_list.
+LOOP AT source_list INTO source_line.
+  WRITE:/ source_line.
+ENDLOOP.
+
+includename = cl_oo_classname_service=>get_prosec_name( _classname ).
+READ REPORT includename INTO source_list.
+LOOP AT source_list INTO source_line.
+  WRITE:/ source_line.
+ENDLOOP.
+
+includename = cl_oo_classname_service=>get_prisec_name( _classname ).
+READ REPORT includename INTO source_list.
+LOOP AT source_list INTO source_line.
+  WRITE:/ source_line.
+ENDLOOP.
+
+includename = cl_oo_classname_service=>get_ccimp_name( _classname ).
+READ REPORT includename INTO source_list.
+LOOP AT source_list INTO source_line.
+  WRITE:/ source_line.
+ENDLOOP.
+
+includename = cl_oo_classname_service=>get_ccdef_name( _classname ).
+READ REPORT includename INTO source_list.
+LOOP AT source_list INTO source_line.
+  WRITE:/ source_line.
+ENDLOOP.
+
+includename = cl_oo_classname_service=>get_ccmac_name( _classname ).
+READ REPORT includename INTO source_list.
+LOOP AT source_list INTO source_line.
+  WRITE:/ source_line.
+ENDLOOP.
